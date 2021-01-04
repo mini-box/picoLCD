@@ -1,0 +1,707 @@
+Display picoLCD {
+    Driver   'picoLCDGraphic'
+    Size     '256x64'
+    Contrast  230
+    Backlight 1
+    Inverted   1
+    Icons     1
+}
+
+Variables {
+   tick 500
+   tack 100
+   minute 60000
+}
+
+
+
+#Plugin KVV {
+#    StationID '12_701'
+#    Refresh 30
+#    Proxy 'igate'
+#    Port 8080;
+#}
+
+#Plugin Seti {
+#    Directory '/root/setiathome-3.08.i686-pc-linux-gnu'
+#}
+
+Widget RootFSSpace {
+    class  'Text'
+    expression statfs('/', 'bavail')*statfs('/', 'bsize')/1024/1024
+    prefix '/ '
+    postfix 'MB available'
+    width  20
+    align  'L'
+    update 1000
+}
+                            
+
+#Plugin MySQL {
+#    server 'gsmlandia.com'	# if none, localhost assumed
+#    port 3306			# if none, MySQL default assumed
+#    user 'lcd4linux'		# if none, lcd4linux unix owner assumed
+#    password 'lcd4linux'	# if none, empty password assumed
+#    database 'lcd4linux'	# MUST be specified
+#}
+
+#Plugin Pop3 {
+#   server1 'localhost'
+#   port1 110
+#   user1 'user'
+#   password1 'pass'
+#}
+
+
+Widget OS {
+    class 'Text'
+    expression '*** '.uname('sysname').' '.uname('release').' ***'
+    width 20
+    align 'M'
+    style 'bold'
+    speed 50	
+    update tick
+}
+
+
+Widget Time {
+    class 'Text'
+    expression strftime('%a,%d/%m %H:%M:%S',time())
+    width 20
+    align 'E'
+    update 1000
+}
+                    
+
+Widget HDDTemp {
+    class 'Text'
+    #expression 'IDE Temp'.exec ('hddtemp /dev/sda | cut -f 3 -d :', 1000)
+    width 14
+    align 'L'
+    update 1000
+}
+
+Widget BottomTicker {
+    class  'Text'
+    expression uname('sysname').' '.uname('domainname').' '.uname('release').' '.uname('machine').' '.cpuinfo('model name')
+    #expression strftime('%A %d/%m %H:%M:%S',time()).' '.cpuinfo('model name').' '. uptime('%d days %H:%M:%S')
+    #expression strftime('%A %d/%m %H:%M:%S',time())
+    prefix ''
+    width  42
+    align  'M'
+    speed 1000	
+    update tick
+    style bold
+}
+
+Widget CPU {
+    class  'Text'
+    expression  uname('machine')
+    prefix 'CPU '
+    width  9
+    align  'L'
+    style test::onoff(7)>0?'bold':'norm'
+    update tick
+}
+
+
+Widget CPUinfo {
+    class  'Text'
+    expression  cpuinfo('model name')
+    prefix ''
+    width  42
+    align  'M'
+    speed 100	
+    update tick
+}
+
+
+Widget RAMTotal {
+    class  'Text'
+    expression meminfo('MemTotal')/1024
+    postfix  'MB Free'	
+    width  11
+    precision 0
+    align  'L'
+    update tick
+}
+
+Widget RAMFree {
+    class  'Text'
+    expression meminfo('MemFree')/1024
+    prefix 'RAM '
+    postfix '/'	
+    width  9
+    precision 0
+    align  'R'
+    update tick
+}
+
+Widget Busy {
+    class 'Text'
+    expression proc_stat::cpu('busy', 500)
+    prefix 'CPU '	
+    postfix '%'	
+    width 10	
+    precision 1
+    align 'R'	
+    update tick	
+}	
+
+Widget BusyBar {
+    class 'Bar'
+    expression  proc_stat::cpu('busy',   500)
+#    expression2 proc_stat::cpu('system', 500)
+    length 12	
+    direction 'E'
+    update tack
+}
+
+Widget Load {
+    class 'Text'
+    expression loadavg(1)
+    prefix 'Load'
+    postfix loadavg(1)>1.0?'!':' '
+    width 10
+    precision 1
+    align 'R'
+    update tick
+}
+
+Widget LoadBar {
+    class 'Bar'
+    expression  loadavg(1)
+    max 2.0
+    length 10	
+    direction 'E'
+    update tack
+}
+
+
+Widget Disk {
+    class 'Text'
+    # disk.[rw]blk return blocks, we assume a blocksize of 512
+    # to get the number in kB/s we would do blk*512/1024, which is blk/2 
+    # expression (proc_stat::disk('.*', 'rblk', 500)+proc_stat::disk('.*', 'wblk', 500))/2
+    # with kernel 2.6, disk_io disappeared from /proc/stat but moved to /proc/diskstat
+    # therefore you have to use another function called 'diskstats':
+    expression diskstats('sda', 'read_sectors', 500) + diskstats('sda', 'write_sectors', 500)
+    prefix 'IDE'
+    postfix ' '
+    width 10	
+    precision 0
+    align 'R'	
+    update tick	
+}	
+
+Widget DiskBar {
+    class 'Bar'
+    #expression  proc_stat::disk('.*', 'rblk', 500)
+    #expression2 proc_stat::disk('.*', 'wblk', 500)
+    # for kernel 2.6:
+    expression  diskstats('sda', 'read_sectors',  500)
+    expression2 diskstats('sda', 'write_sectors', 500)
+    length 14	
+    direction 'E'
+    update tack
+}
+
+Widget Eth0 {
+    class 'Text'
+    expression (netdev('eth0', 'Rx_bytes', 500)+netdev('eth0', 'Tx_bytes', 500))/1024
+    prefix 'ETH'
+    postfix ' '
+    width 9	
+    precision 0
+    align 'R'	
+    update tick	
+}	
+
+Widget Eth0Bar {
+    class 'Bar'
+    expression  netdev('eth0', 'Rx_bytes', 500)
+    expression2 netdev('eth0', 'Tx_bytes', 500)
+    length 14	
+    direction 'E'
+    update tack
+}
+
+Widget PPP {
+    class 'Text'
+    expression (ppp('Rx:0', 500)+ppp('Tx:0', 500))
+    prefix 'PPP'
+    width 9
+    precision 0
+    align 'R'
+    update tick
+}
+
+Widget Temp {
+    class 'Text'
+    expression i2c_sensors('temp_input3')*1.0324-67
+    prefix 'Temp'
+    width 9
+    precision 1
+    align 'R'
+    update tick
+}
+
+Widget TempBar {
+    class 'Bar'
+    expression  i2c_sensors('temp_input3')*1.0324-67
+    min 40
+    max 80
+    length 10
+    direction 'E'
+    update tack
+}
+
+Widget MySQLtest1 {
+    class 'Text'
+    expression MySQL::query('SELECT id FROM table1')
+    width 20
+    align 'R'
+    prefix 'MySQL test:'
+    update minute
+}
+
+Widget MySQLtest2 {
+    class 'Text'
+    expression MySQL::status()
+    width 20
+    align 'M'
+    prefix 'Status: '
+    update minute
+}
+
+Widget Uptime {
+    class 'Text'
+    expression uptime('%d days %H:%M:%S')
+    width 20
+    align 'R'
+    prefix 'Up '
+    update 1000
+}
+
+
+# debugging widgets 
+
+Widget BarTest {
+    class 'Bar'
+    # test::bar(barno,maxval,startval,delta) - move a test value between 0 and max.
+    # delta= step to change value by each time it's read.
+    # barno - ten different test bar values can be set up, with barno=0..9
+    # if delta=0, just returns the value of bar n instead of changing it.
+    expression test::bar(0,30,25,1)
+    expression2 test::bar(1,30,0,1)
+    length 8
+    # max 50
+    direction 'E'
+    update 10
+}
+
+Widget BarTestVal {
+    class 'Text'
+    expression test::bar(0,100,50,0)
+    prefix 'Test '
+    width 9
+    update 200
+}
+
+Widget HddTest {
+    class 'icon'
+    speed 500
+    visible test::onoff(0)
+    bitmap {
+        row1 '******'
+        row2 '*....*'
+        row3 '**..**'
+        row4 '**..**'
+        row5 '*....*'
+        row6 '*.**.*'
+        row7 '******'
+        row8 '******'
+    }
+}
+
+Widget RamTest {
+    class 'icon'
+    speed 500
+    visible test::onoff(0)
+    bitmap {
+        row1 '******'
+        row2 '*....*'
+        row3 '**..**'
+        row4 '*.**.*'
+        row5 '*.**.*'
+        row6 '******'
+        row7 '******'
+        row8 '******'
+    }
+}
+
+
+Widget LightningTest {
+    class 'icon'
+    speed 500
+    visible test::onoff(0)
+    bitmap {
+        row1 '...***'
+        row2 '..***.'
+        row3 '.***..'
+        row4 '.****.'
+        row5 '..**..'
+        row6 '.**...'
+        row7 '**....'
+        row8 '*.....'
+    }
+}
+
+
+# Icons
+
+Widget Heartbeat {
+    class 'Icon'
+    speed 800
+    Bitmap {
+	Row1 '.....|.....'
+	Row2 '.*.*.|.*.*.'
+	Row3 '*****|*.*.*'
+	Row4 '*****|*...*'
+	Row5 '.***.|.*.*.'
+	Row6 '.***.|.*.*.'
+	Row7 '..*..|..*..'
+	Row8 '.....|.....'
+    }
+}
+
+Widget EKG {
+    class 'Icon'
+    speed 50
+    Bitmap {
+	Row1 '.....|.....|.....|.....|.....|.....|.....|.....'
+	Row2 '.....|....*|...*.|..*..|.*...|*....|.....|.....'
+	Row3 '.....|....*|...*.|..*..|.*...|*....|.....|.....'
+	Row4 '.....|....*|...**|..**.|.**..|**...|*....|.....'
+	Row5 '.....|....*|...**|..**.|.**..|**...|*....|.....'
+	Row6 '.....|....*|...*.|..*.*|.*.*.|*.*..|.*...|*....'
+	Row7 '*****|*****|****.|***..|**..*|*..**|..***|.****'
+	Row8 '.....|.....|.....|.....|.....|.....|.....|.....'
+    }
+}
+Widget Karo {
+    class 'Icon'
+    speed 200
+    Bitmap {
+	Row1 '.....|.....|.....|.....|..*..|.....|.....|.....'
+	Row2 '.....|.....|.....|..*..|.*.*.|..*..|.....|.....'
+	Row3 '.....|.....|..*..|.*.*.|*...*|.*.*.|..*..|.....'
+	Row4 '.....|..*..|.*.*.|*...*|.....|*...*|.*.*.|..*..'
+	Row5 '.....|.....|..*..|.*.*.|*...*|.*.*.|..*..|.....'
+	Row6 '.....|.....|.....|..*..|.*.*.|..*..|.....|.....'
+	Row7 '.....|.....|.....|.....|..*..|.....|.....|.....'
+	Row8 '.....|.....|.....|.....|.....|.....|.....|.....'
+    }
+}
+Widget Heart {
+    class 'Icon'
+    speed 250
+    Bitmap {
+	Row1 '.....|.....|.....|.....|.....|.....'
+	Row2 '.*.*.|.....|.*.*.|.....|.....|.....'
+	Row3 '*****|.*.*.|*****|.*.*.|.*.*.|.*.*.'
+	Row4 '*****|.***.|*****|.***.|.***.|.***.'
+	Row5 '.***.|.***.|.***.|.***.|.***.|.***.'
+	Row6 '.***.|..*..|.***.|..*..|..*..|..*..'
+	Row7 '..*..|.....|..*..|.....|.....|.....'
+	Row8 '.....|.....|.....|.....|.....|.....'
+    }
+}
+Widget Blob {
+    class 'Icon'
+    speed 250
+    Bitmap {
+	Row1 '.....|.....|.....'
+	Row2 '.....|.....|.***.'
+	Row3 '.....|.***.|*...*'
+	Row4 '..*..|.*.*.|*...*'
+	Row5 '.....|.***.|*...*'
+	Row6 '.....|.....|.***.'
+	Row7 '.....|.....|.....'
+	Row8 '.....|.....|.....'
+    }
+}
+Widget Wave {
+    class 'Icon'
+    speed 100
+    Bitmap {
+	Row1 '..**.|.**..|**...|*....|.....|.....|.....|.....|....*|...**'
+	Row2 '.*..*|*..*.|..*..|.*...|*....|.....|.....|....*|...*.|..*..'
+	Row3 '*....|....*|...*.|..*..|.*...|*....|....*|...*.|..*..|.*...'
+	Row4 '*....|....*|...*.|..*..|.*...|*....|....*|...*.|..*..|.*...'
+	Row5 '*....|....*|...*.|..*..|.*...|*....|....*|...*.|..*..|.*...'
+	Row6 '.....|.....|....*|...*.|..*..|.*..*|*..*.|..*..|.*...|*....'
+	Row7 '.....|.....|.....|....*|...**|..**.|.**..|**...|*....|.....'
+	Row8 '.....|.....|.....|.....|.....|.....|.....|.....|.....|.....'
+    }
+}
+Widget Squirrel {
+    class 'Icon'
+    speed 100
+    Bitmap {
+	Row1 '.....|.....|.....|.....|.....|.....'
+	Row2 '.....|.....|.....|.....|.....|.....'
+	Row3 '.....|.....|.....|.....|.....|.....'
+	Row4 '**...|.**..|..**.|...**|....*|.....'
+	Row5 '*****|*****|*****|*****|*****|*****'
+	Row6 '...**|..**.|.**..|**...|*....|.....'
+	Row7 '.....|.....|.....|.....|.....|.....'
+	Row8 '.....|.....|.....|.....|.....|.....'
+    }
+}
+
+Widget IOIcon {
+    class 'Icon'
+    speed 100
+    Bitmap {
+	Row1 '.....|.....|.....|.....|.....|.....'
+	Row2 '...*.|.....|...*.|.....|...*.|.....'
+	Row3 '*****|.....|*****|.....|*****|.....'
+	Row4 '...*.|.....|...*.|.....|...*.|.....'
+	Row5 '.*...|.....|.*...|.....|.*...|.....'
+	Row6 '*****|.....|*****|.....|*****|.....'
+	Row7 '.*...|.....|.*...|.....|.*...|.....'
+	Row8 '.....|.....|.....|.....|.....|.....'
+    }
+}
+
+Widget Lightning {
+    class 'icon'
+    speed 100
+    visible cpu('busy', 500)-50
+    bitmap {
+        row1 '...***'
+        row2 '..***.'
+        row3 '.***..'
+        row4 '.****.'
+        row5 '..**..'
+        row6 '.**...'
+        row7 '**....'
+        row8 '*.....'
+    }
+}
+
+Widget Rain {
+    class 'icon'
+    speed 200
+    bitmap {
+	row1 '...*.|.....|.....|.*...|....*|..*..|.....|*....'
+	row2 '*....|...*.|.....|.....|.*...|....*|..*..|.....'
+	row3 '.....|*....|...*.|.....|.....|.*...|....*|..*..'
+	row4 '..*..|.....|*....|...*.|.....|.....|.*...|....*'
+	row5 '....*|..*..|.....|*....|...*.|.....|.....|.*...'
+	row6 '.*...|....*|..*..|.....|*....|...*.|.....|.....'
+	row7 '.....|.*...|....*|..*..|.....|*....|...*.|.....'
+	row8 '.....|.....|.*...|....*|..*..|.....|*....|...*.'
+    }
+}
+
+Widget Test {
+    class 'Text'
+    expression '1234567890123456789012345678901234567890'
+    width 40
+    foreground 'ff0000ff'
+}
+
+Widget Test1 {
+    class 'Text'
+    expression 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'
+    width 40
+    align 'M'
+    speed 100
+}
+
+Widget Test2 {
+    class 'Text'
+    expression '1234567890abcdefghijklmnopqrstuvwxyz'
+    width 40
+    align 'M'
+    speed 150
+}
+
+Widget GPO_Val1 {
+    class 'Text'
+    expression LCD::GPO(1)
+    prefix 'GPO#1'
+    width 10
+    precision 0
+    align 'R'
+    update tick
+}
+
+Widget GPI_Val1 {
+    class 'Text'
+    expression LCD::GPI(1)
+    prefix 'GPI#1'
+    width 10
+    precision 0
+    align 'R'
+    update tick
+}
+
+Widget GPO_Val4 {
+    class 'Text'
+    expression LCD::GPO(4)
+    prefix 'GPO#4'
+    width 10
+    precision 0
+    align 'R'
+    update tick
+}
+
+Widget GPO_Test1 {
+    class 'GPO'
+    expression 255*test::onoff(1)
+    update 300
+}
+
+Widget GPO_Test255 {
+    class 'GPO'
+    expression test::bar(0,255, 0, 1)
+    update 100
+}
+
+Widget GPO_picolcd {
+    class 'GPO'
+    expression test::onoff(1)
+    update 300
+}
+
+Widget CpuImage {
+    class 'Image'
+    file '/etc/picoLCDGraphic/Images/cpu_a.png'
+    update 1000
+    visible 1
+    inverted 0
+    reload 0
+}
+
+Widget HddImage {
+    class 'Image'
+    file '/etc/picoLCDGraphic/Images/hdd_a.png'
+    update 1000
+    visible 1
+    inverted 0
+    reload 0
+}
+
+Widget RamImage {
+    class 'Image'
+    file '/etc/picoLCDGraphic/Images/ram_a.png'
+    update 1000
+    visible 1
+    inverted 0
+    reload 0
+}
+
+Widget NetImage {
+    class 'Image'
+    file '/etc/picoLCDGraphic/Images/net_a.png'
+    update 1000
+    visible 1
+    inverted 0
+    reload 0
+}
+
+Widget FanImage {
+    class 'Image'
+    file '/etc/picoLCDGraphic/Images/fan_a.png'
+    update 1000
+    visible 1
+    inverted 0
+    reload 0
+}
+
+
+Widget BandwidthImage {
+    class 'Image'
+    file '/etc/picoLCDGraphic/Images/stream-pop.png'
+    #file '/test.png'
+    update 1000
+    visible 1
+    inverted 0
+    reload 1
+}
+
+Widget KVV {
+    class 'Text'
+    expression kvv::line(0).' '.kvv::station(0)
+    width 11
+
+    align 'L'
+    update tick
+    Foreground 'ffff00'
+    style 'bold'
+}
+
+Widget KVV_TIME {
+    class 'Text'
+    expression kvv::time_str(0)
+    width 2
+
+    align 'R'
+    update tick
+    foreground kvv::time(0) < 2 ? 'FF0000' : ( kvv::time(0) < 5 ? 'FFFF00' : '00FF00' )
+    style 'bold'
+}
+Layout picoLCD {
+#    Layer 1 {
+#	    X0.Y0 'BandwidthImage'
+#	}
+#    Layer 1 {
+#	X0.Y0 'CpuImage'
+#    }
+    Row1 {
+	#Col1 'CpuImage'
+	Col1 'Busy'
+	Col12 'BusyBar'
+    }
+    Row2 {
+	Col1 'Disk'
+	Col11 'IOIcon'
+	Col12 'DiskBar'
+    }
+    Row3 {
+	Col1 'Eth0'
+	Col11 'IOIcon'
+	Col12 'Eth0Bar'
+    }
+    Row4 {
+	Col1 'RAMFree'
+	Col10 'RAMTotal'
+    }
+    Row5 {
+	Col1 'HDDTemp'
+    }
+    Row6 {
+	Col1 'Uptime'
+    }
+    Row7 {
+	Col1 'RootFSSpace'
+    }
+    Row8 {
+	Col1 'BottomTicker'
+    }
+    Layer 2 {
+    	X0.Y0 'ImageTest'
+    }
+
+#GPO1 'GPO_picolcd'
+#GPO2 'GPO_picolcd'
+#GPO8 'GPO_picolcd'
+}
+
+
+
+Display 'picoLCD'
+Layout  'picoLCD'
