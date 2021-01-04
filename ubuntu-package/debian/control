@@ -1,0 +1,21 @@
+Source: lcdproc
+Section: utils
+Priority: extra
+Maintainer: Nicu Pavel <npavel@linuxconsulting.ro>
+Build-Depends: debhelper (>= 4), autotools-dev, texinfo, libncurses5-dev, libusb-dev, doxygen , dpatch
+Standards-Version: 3.7.2
+
+Package: lcdproc
+Architecture: i386
+Depends: lsb-base, ${shlibs:Depends}, debconf | debconf-2.0
+Description: LCD display driver daemon and clients for
+ picoLCD devices from mini-box.com
+ .
+ Various clients are available that display things like CPU load, system
+ load, memory usage, uptime, and a lot more. Custom clients can be
+ written using the simple client-server protocol and provided example
+ code.
+ .
+ Homepage: http://www.lcdproc.org/
+Tag: use::monitoring, administration::monitoring, hardware::lcd, role::sw:utility,
+ interface::commandline, interface::daemon, made-of::lang:c

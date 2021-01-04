@@ -1,0 +1,10 @@
+# Automatically added by dh_installinit
+if [ -x "/etc/init.d/LCDd" ]; then
+	update-rc.d LCDd start 60 2 3 4 5 . stop 60 0 1 6 . >/dev/null
+	if [ -x "`which invoke-rc.d 2>/dev/null`" ]; then
+		invoke-rc.d LCDd start || exit $?
+	else
+		/etc/init.d/LCDd start || exit $?
+	fi
+fi
+# End automatically added section

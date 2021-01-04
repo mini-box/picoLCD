@@ -1,0 +1,45 @@
+# Splash file must have :splash as header.
+# Current compiled version support 2 lines of 20 characters each
+# Number of lines/columns can be changed in driver.h
+#
+# Format is:
+# (minutes) (seconds)
+# (next spash) (repeat)
+# (leds)
+# Text Line 1
+# Text Line 2
+# (minute) (seconds)
+# (next spash) (repeat)
+# (leds)
+# Text Line 1
+# Text Line 2
+:splash
+
+00 05 
+00 00 
+11111111
+Linux USBLCD Version
+      0.1.2         
+
+00 10
+00 00
+11111111
+mini-box.com 2006   
+                                    
+00 10
+00 000
+11111111
+Loading iMedia OS...
+                    
+00 05
+00 000
+11111111
+Copyright 2006       
+    mini-box.com        
+
+00 05
+00 000
+11111111
+All done have fun                               
+                           
+

@@ -1,0 +1,5 @@
+lcdproc (0.5.3-1) unstable; urgency=low
+
+  * Initial release (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+
+ -- Nicu Pavel <npavel@linuxconsulting.ro>  Mon, 22 Jun 2009 10:48:34 +0300

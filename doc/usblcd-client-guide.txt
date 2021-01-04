@@ -1,0 +1,157 @@
+ usblcd client Guide
+=========================
+
+    Usblcd and libusblcd are (c) 2006 iTuner Networks and Mini-Box.Com
+    and distributed under the terms of the GNU General Public License.
+    See the file ./COPYING in the source distribution for more information.
+    
+    Please send bug reports to <support@mini-box.com>
+
+    
+
+Introduction
+-------------
+
+    Usblcd is a small application based on libusblcd aiming to provide
+basic functionality for Mini-Box.Com USB LCD.
+    Usblcd is a command line client which is able to execute multiple commands 
+given on command line.
+    Future versions will be able to parse commands from STDIN.
+
+Requirements
+------------
+    Usblcd doesn't require any kernel drivers except basic USB drivers
+    and can run on both 2.4.x and 2.6.x kernel versions.
+    
+    It relies on libusb (http://libusb.sourceforge.net) and libhid
+    (libhid.alioth.debian.org).
+    
+    Also usbfs filesystem must be mounted (by default on all linux distributions).
+    You can mount usbfs by executing the command:
+     mount -t usbfs usbfs /proc/bus/usb
+    
+    To verify if usb is working corectly on your distribution execute:
+	lsusb or lsusb -v
+    which should list the usb devices that are connected to your computer 
+    like in the exemple below
+    
+    Bus 003 Device 001: ID 0000:0000
+    Bus 002 Device 003: ID 04d8:0002 Microchip Technology, Inc.
+    Bus 002 Device 002: ID 046d:c01e Logitech, Inc.
+    Bus 002 Device 001: ID 0000:0000
+    Bus 001 Device 001: ID 0000:0000
+    
+Using usblcd
+-------------
+
+    Running usblcd with the USBLCD connected to a USB port without
+any parameters should output:
+
+  device identification of HIDInterface 002/003[0]:
+  dev_handle:    0x09304440
+  device:        0x09300208
+  location:      002/003
+  manufacturer:  ACME Labs
+  product:       ACME LCD keypad
+  serial number: 1.4 beta
+  
+    The manufacturer, product and serial number might change in the future but
+the output should be similar.  
+  
+    Usblcd accepts multiple commands on command line or from STDIN.
+    These commands can be written one after another delimited by space.
+
+Description of commands    
+-----------------------
+
+    usblcd backlight [0|1]
+	turns on or off LCD screen backlight
+
+    usblcd  contrast [0-40]
+	set the contrast. 0 is maximum contrast and 40 minimum
+
+    usblcd led [led number] [0|1]
+	turn on/off one of the front panel leds (1-8)
+
+    usblcd clear
+	clears LCD screen
+	
+    usblcd text [row:0-1][column:0-19][text]
+	prints text on LCD screen starting with row and column
+	
+    usblcd splash [filename]
+	sets the splash screens content from filename.
+	Samples of splash files are located in doc/ directory.
+	After the splash file has been loaded into EEPROM the usb
+	lcd should be restarted by reconnecting it to USB port.
+	
+	Example of a splash file:
+	
+	# Splash file must have :splash as header.
+	# Current compiled version support 2 lines of 20 characters each
+        # Number of lines/columns can be changed in driver.h
+	#
+	# Format is:
+	# (minutes) (seconds)
+	# Text Line 1
+	# Text Line 2
+	# (minute) (seconds)
+	# Text Line 1
+	# Text Line 2
+	:splash
+    
+	00 05 
+	12345678901234567890
+	12345678901234567890
+	00 15
+	12345678901234567890
+	12345678901234567890
+	00 25
+	12345678901234567890
+	12345678901234567890
+	00 35
+	12345678901234567890
+	12345678901234567890
+	00 45
+	12345678901234567890
+	12345678901234567890
+
+
+
+    usblcd setfont [filename]
+	overwrite the first 10 characters from LCD CG-RAM
+	with the caracters from filename.
+	
+    usblcd flash [filename] 
+     write the firmware from filename into EEPROM
+     
+    usblcd read
+	read events (key press and infrared data) and outputs to stderr
+	This data can be piped and parsed by another application.
+	Format is: KEY: <key1> <key2> 
+		   IR:  <IR1> ... <IRn>
+		   
+	For keyboard events <00> <00> means key release or more than 2
+	keys pressed at the same time.
+	
+    usblcd histo
+	draws a sample histogram using big characters
+	
+    usblcd smallhisto
+	draws a sample histogram using 1pixel bars
+    	
+ wait [seconds]
+	wait for a number of seconds before executing the next command
+	
+
+Examples 
+--------
+ usblcd led 1 1 wait 1 led 2 1 wait 1 backlight 1 contrast 0 text 1 2 "mini-box.com USB LCD" read
+ 
+This will lightup first led then wait 1 second, light the second
+led and wait 1 second, will turn backlight on, set the contrast 
+to maximum, write the "mini-box.com USB LCD" text to second row
+starting from third column, and will continue printing events
+till closed with CTRL+C or SIGTERM
+
+    For more examples see the examples directory.

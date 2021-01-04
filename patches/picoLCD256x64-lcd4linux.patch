@@ -1,0 +1,2318 @@
+diff -urN lcd4linux/config.h.in lcd4linux-picoLCDGraphic/config.h.in
+--- lcd4linux/config.h.in	2008-07-10 13:04:27.000000000 +0300
++++ lcd4linux-picoLCDGraphic/config.h.in	2008-07-10 11:49:28.000000000 +0300
+@@ -476,6 +476,9 @@
+ /* picoLCD driver */
+ #undef WITH_PICOLCD
+ 
++/* picoLCDGraphic driver */
++#undef WITH_PICOLCDGRAPHIC
++
+ /* PNG driver */
+ #undef WITH_PNG
+ 
+diff -urN lcd4linux/drivers.m4 lcd4linux-picoLCDGraphic/drivers.m4
+--- lcd4linux/drivers.m4	2008-07-10 13:04:27.000000000 +0300
++++ lcd4linux-picoLCDGraphic/drivers.m4	2008-07-10 12:24:02.000000000 +0300
+@@ -35,8 +35,8 @@
+   [                        BeckmannEgle, BWCT, CrystalFontz, Curses, Cwlinux,]
+   [                        G15, HD44780, LCD2USB LCDLinux, LCDTerm, LPH7508,]
+   [                        LUIse, M50530, MatrixOrbital, MilfordInstruments,]
+-  [                        Noritake, NULL, PNG, PPM, Pertelian, picoLCD, RouterBoard,]
+-  [                        Sample, serdisplib, SimpleLCD, st2205, T6963, Trefon,]
++  [                        Noritake, NULL, PNG, PPM, Pertelian, picoLCD, picoLCDGraphic,]
++  [                        RouterBoard, Sample, serdisplib, SimpleLCD, st2205, T6963, Trefon,]
+   [                        USBLCD, USBHUB, WincorNixdorf, X11],
+   drivers=$withval, 
+   drivers=all
+@@ -79,6 +79,7 @@
+          NULL="yes" 
+          PERTELIAN="yes"
+          PICOLCD="yes"
++	 PICOLCDGRAPHIC="yes"
+          PNG="yes"
+          PPM="yes"
+          ROUTERBOARD="yes"
+@@ -159,6 +160,10 @@
+       picoLCD)
+          PICOLCD=$val
+          ;;         
++      picoLCDGraphic)
++         PICOLCDGRAPHIC=$val
++         ;;         
++         
+       PNG)
+          PNG=$val
+          ;;
+@@ -424,6 +429,20 @@
+    fi
+ fi
+ 
++if test "$PICOLCDGRAPHIC" = "yes"; then
++   if test "$has_usb" = "true"; then
++      TEXT="yes"
++      GRAPHIC="yes"
++      GPIO="yes"
++      SERIAL="yes"
++      LIBUSB="yes"
++      DRIVERS="$DRIVERS drv_picoLCDGraphic.o"
++      AC_DEFINE(WITH_PICOLCDGRAPHIC,1,[picoLCDGraphic driver])
++   else
++      AC_MSG_WARN(usb.h not found: picoLCDGraphic driver disabled)
++   fi
++fi
++
+ if test "$PNG" = "yes"; then
+    if test "$has_gd" = "true"; then
+       IMAGE="yes"
+diff -urN lcd4linux/drv.c lcd4linux-picoLCDGraphic/drv.c
+--- lcd4linux/drv.c	2008-07-10 13:04:27.000000000 +0300
++++ lcd4linux-picoLCDGraphic/drv.c	2008-07-10 11:50:26.000000000 +0300
+@@ -69,6 +69,7 @@
+ extern DRIVER drv_NULL;
+ extern DRIVER drv_Pertelian;
+ extern DRIVER drv_picoLCD;
++extern DRIVER drv_picoLCDGraphic;
+ extern DRIVER drv_RouterBoard;
+ extern DRIVER drv_Sample;
+ extern DRIVER drv_st2205;
+@@ -154,6 +155,9 @@
+ #ifdef WITH_PICOLCD
+     &drv_picoLCD,
+ #endif
++#ifdef WITH_PICOLCDGRAPHIC
++    &drv_picoLCDGraphic,
++#endif
+ #ifdef WITH_ROUTERBOARD
+     &drv_RouterBoard,
+ #endif
+diff -urN lcd4linux/drv_picoLCDGraphic.c lcd4linux-picoLCDGraphic/drv_picoLCDGraphic.c
+--- lcd4linux/drv_picoLCDGraphic.c	1970-01-01 02:00:00.000000000 +0200
++++ lcd4linux-picoLCDGraphic/drv_picoLCDGraphic.c	2008-07-10 12:45:44.000000000 +0300
+@@ -0,0 +1,624 @@
++/* $Id: drv_picoLCDGraphic.c 840 2007-09-09 12:17:42Z michael $
++ * $URL: https://ssl.bulix.org/svn/lcd4linux/trunk/drv_picoLCDGraphic.c $
++ *
++ * driver for picoLCD Graphic(256x64) displays from mini-box.com
++ *
++ * Copyright (C) 2005 Michael Reinelt <michael@reinelt.co.at>
++ * Copyright (C) 2005, 2006, 2007 The LCD4Linux Team <lcd4linux-devel@users.sourceforge.net>
++ *
++ * Copyright (C) 2008 Nicu Pavel, Mini-Box.com <npavel@mini-box.com>
++ *
++ * This file is part of LCD4Linux.
++ *
++ * LCD4Linux is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * LCD4Linux is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ */
++
++/* 
++ *
++ * exported fuctions:
++ *
++ * struct DRIVER drv_picoLCDGraphic
++ *
++ */
++
++#include "config.h"
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++#include <errno.h>
++#include <unistd.h>
++#include <termios.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++#include <sys/time.h>
++
++#include <usb.h>
++
++#include "debug.h"
++#include "cfg.h"
++#include "qprintf.h"
++#include "udelay.h"
++#include "plugin.h"
++#include "widget.h"
++#include "widget_text.h"
++#include "widget_icon.h"
++#include "widget_bar.h"
++#include "drv.h"
++#include "drv_generic_gpio.h"
++#include "drv_generic_keypad.h"
++#include "drv_generic_graphic.h" 
++
++
++
++#define picoLCD_VENDOR  0x04d8
++#define picoLCD_DEVICE  0xc002
++
++#define OUT_REPORT_LED_STATE		0x81
++#define OUT_REPORT_LCD_BACKLIGHT	0x91
++#define OUT_REPORT_LCD_CONTRAST		0x92
++
++#define OUT_REPORT_CMD			0x94
++#define OUT_REPORT_DATA			0x95
++#define OUT_REPORT_CMD_DATA		0x96
++
++#define SCREEN_H			64
++#define SCREEN_W			256
++
++
++#if 1
++#define DEBUG(x) debug("%s(): %s", __FUNCTION__, x);
++#else
++#define DEBUG(x)
++#endif
++
++
++static char Name[] = "picoLCDGraphic";
++static unsigned char *pLG_framebuffer;
++
++/* used to display white text on black background or inverse */
++unsigned char inverted = 0;
++
++static unsigned int gpo = 0;
++
++static char *Buffer;
++static char *BufPtr;
++
++static usb_dev_handle *lcd;
++extern int usb_debug;
++
++
++
++/****************************************/
++/***  hardware dependant functions    ***/
++/****************************************/
++
++static int drv_pLG_open(void)
++{
++    struct usb_bus *busses, *bus;
++    struct usb_device *dev;
++    char driver[1024];
++    char product[1024];
++    char manufacturer[1024];
++    char serialnumber[1024];
++    int ret;
++
++    lcd = NULL;
++
++    info("%s: scanning for picoLCD 256x64...", Name);
++
++    usb_debug = 0;
++
++    usb_init();
++    usb_find_busses();
++    usb_find_devices();
++    busses = usb_get_busses();
++
++    for (bus = busses; bus; bus = bus->next) {
++	for (dev = bus->devices; dev; dev = dev->next) {
++	    if ((dev->descriptor.idVendor == picoLCD_VENDOR) && (dev->descriptor.idProduct == picoLCD_DEVICE)) {
++
++		info("%s: found picoLCD on bus %s device %s", Name, bus->dirname, dev->filename);
++
++		lcd = usb_open(dev);
++
++		ret = usb_get_driver_np(lcd, 0, driver, sizeof(driver));
++
++		if (ret == 0) {
++		    info("%s: interface 0 already claimed by '%s'", Name, driver);
++		    info("%s: attempting to detach driver...", Name);
++		    if (usb_detach_kernel_driver_np(lcd, 0) < 0) {
++			error("%s: usb_detach_kernel_driver_np() failed!", Name);
++			return -1;
++		    }
++		}
++
++		usb_set_configuration(lcd, 1);
++		usleep(100);
++
++		if (usb_claim_interface(lcd, 0) < 0) {
++		    error("%s: usb_claim_interface() failed!", Name);
++		    return -1;
++		}
++
++		usb_set_altinterface(lcd, 0);
++
++		usb_get_string_simple(lcd, dev->descriptor.iProduct, product, sizeof(product));
++		usb_get_string_simple(lcd, dev->descriptor.iManufacturer, manufacturer, sizeof(manufacturer));
++		usb_get_string_simple(lcd, dev->descriptor.iSerialNumber, serialnumber, sizeof(serialnumber));
++
++		info("%s: Manufacturer='%s' Product='%s' SerialNumber='%s'", Name, manufacturer, product, serialnumber);
++
++		return 0;
++	    }
++	}
++    }
++    error("%s: could not find a picoLCD", Name);
++    return -1;
++}
++
++
++static void drv_pLG_send(unsigned char *data, int size)
++{
++    int ret;
++    ret = usb_interrupt_write(lcd, USB_ENDPOINT_OUT + 1, (char *) data, size, 1000);
++    //fprintf(stderr, "%s written %d bytes\n", __FUNCTION__, ret);
++}
++
++static int drv_pLG_close(void)
++{
++    usb_release_interface(lcd, 0);
++    usb_close(lcd);
++
++    return 0;
++}
++
++static void drv_pLG_update_img()
++{
++	unsigned char cmd3[64] = { OUT_REPORT_CMD_DATA }; /* send command + data */
++	unsigned char cmd4[64] = { OUT_REPORT_DATA };     /* send data only */
++	
++	int index, bit, x, y;
++	unsigned char cs, line;
++	unsigned char pixel;
++	
++	info("In %s\n", __FUNCTION__);
++
++	
++	for (cs = 0; cs < 4; cs++)
++	{
++		unsigned char chipsel = (cs << 2);//chipselect
++		for (line = 0; line < 8; line++)
++		{
++			//ha64_1.setHIDPkt(OUT_REPORT_CMD_DATA, 8+3+32, 8, chipsel, 0x02, 0x00, 0x00, 0xb8|j, 0x00, 0x00, 0x40);
++			cmd3[0]=OUT_REPORT_CMD_DATA;
++			cmd3[1]=chipsel;
++			cmd3[2]=0x02;
++			cmd3[3]=0x00;
++			cmd3[4]=0x00;
++			cmd3[5]=0xb8|line;
++			cmd3[6]=0x00;
++			cmd3[7]=0x00;
++			cmd3[8]=0x40;
++			cmd3[9]=0x00;
++			cmd3[10]=0x00;
++			cmd3[11]=32;
++			
++			//ha64_2.setHIDPkt(OUT_REPORT_DATA, 4+32, 4, chipsel | 0x01, 0x00, 0x00, 32);
++			
++			cmd4[0]= OUT_REPORT_DATA;
++			cmd4[1]= chipsel | 0x01;
++			cmd4[2]= 0x00;
++			cmd4[3]= 0x00;
++			cmd4[4]= 32;
++
++			for (index = 0; index < 32; index++)
++			{
++			    pixel = 0x00;
++                            
++			    for (bit = 0; bit < 8; bit ++)
++			    {
++				x = cs * 64 + index;
++				y = (line * 8 + bit + 0) % SCREEN_H;
++				
++                                if( pLG_framebuffer[y * 256 + x] ^ inverted )
++				    pixel |= (1 << bit);
++			    }
++			    cmd3[12 + index] = pixel;
++			}
++                        
++                        for (index = 32; index < 64; index++)
++                        {
++                                pixel = 0x00;
++                            
++                                for (bit = 0; bit < 8; bit ++)
++                                {
++                                        x = cs * 64 + index;
++                                        y = (line * 8 + bit + 0) % SCREEN_H;
++                                        if( pLG_framebuffer[y * 256 + x] ^ inverted )
++                                                pixel |= (1 << bit);
++                                }
++                                	
++                                cmd4[5 + (index - 32)] = pixel;
++                        }
++		
++			drv_pLG_send(cmd3, 44);
++			drv_pLG_send(cmd4, 38);
++		}
++	}
++	
++	//drv_pLG_clear();
++}
++
++
++/* for graphic displays only */
++static void drv_pLG_blit(const int row, const int col, const int height, const int width)
++{
++    int r, c;
++    
++    //DEBUG(fprintf(stderr, "In %s called with row %d col %d height %d width %d\n", __FUNCTION__, row, col, height, width));
++
++    for (r = row; r < row + height; r++) {
++	for (c = col; c < col + width; c++) {
++	    pLG_framebuffer[r * 256 + c] = drv_generic_graphic_black(r, c);
++            //fprintf(stderr, "%d", pLG_framebuffer[r * 256 + c]);
++	}
++        //fprintf(stderr, "\n");
++    }
++    
++    /*
++    for (r = 0; r < 64; r++) {
++            for(c = 0; c < 256; c++) {
++                    fprintf(stderr, "%d", pLG_framebuffer[r * 256 + c]); 
++            }
++            fprintf(stderr, "\n");
++    }
++    */
++    drv_pLG_update_img();
++}
++
++
++void drv_pLG_clear(void)
++{
++	unsigned char cmd[3] = { 0x93, 0x01, 0x00 };	/* init display */
++	unsigned char cmd2[9] = { OUT_REPORT_CMD };	/* init display */
++	unsigned char cmd3[64] = { OUT_REPORT_CMD_DATA }; /* clear screen */
++	unsigned char cmd4[64] = { OUT_REPORT_CMD_DATA }; /* clear screen */
++	
++	int init, index;
++	unsigned char cs, line;
++	
++	
++	info("In %s\n", __FUNCTION__);
++	drv_pLG_send(cmd, 3);
++
++	for (init = 0;init < 4;init++)
++	{
++		unsigned char cs = ((init << 2) & 0xFF);
++		
++		cmd2[0] = OUT_REPORT_CMD;
++		cmd2[1] = cs;
++		cmd2[2] = 0x02;
++		cmd2[3] = 0x00;
++		cmd2[4] = 0x64;
++		cmd2[5] = 0x3F;
++		cmd2[6] = 0x00;
++		cmd2[7] = 0x64;
++		cmd2[8] = 0xC0;
++		
++		drv_pLG_send(cmd2, 9);
++	}
++	
++	
++	for (cs=0;cs<4;cs++)
++	{
++		unsigned char chipsel = (cs << 2);//chipselect
++		for (line=0;line<8;line++)
++		{
++			//ha64_1.setHIDPkt(OUT_REPORT_CMD_DATA, 8+3+32, 8, cs, 0x02, 0x00, 0x00, 0xb8|j, 0x00, 0x00, 0x40);
++			cmd3[0]=OUT_REPORT_CMD_DATA;
++			cmd3[1]=chipsel;
++			cmd3[2]=0x02;
++			cmd3[3]=0x00;
++			cmd3[4]=0x00;
++			cmd3[5]=0xb8|line;
++			cmd3[6]=0x00;
++			cmd3[7]=0x00;
++			cmd3[8]=0x40;
++			cmd3[9]=0x00;
++			cmd3[10]=0x00;
++			cmd3[11]=32;
++			
++			unsigned char temp = 0;
++			
++			for (index=0;index<32;index++)
++			{
++    			    cmd3[12+index] = temp;
++    			}
++			
++			drv_pLG_send(cmd3,64);
++
++			//ha64_2.setHIDPkt(OUT_REPORT_DATA, 4+32, 4, cs | 0x01, 0x00, 0x00, 32);
++			
++			cmd4[0]= OUT_REPORT_DATA;
++			cmd4[1]= chipsel | 0x01;
++			cmd4[2]= 0x00;
++			cmd4[3]= 0x00;
++			cmd4[4]= 32;
++			
++			for (index=32;index<64;index++)
++			{
++			    temp = 0x00;
++			    cmd4[5+(index-32)] = temp;
++			}
++			drv_pLG_send(cmd4,64);
++		}
++	}
++}
++
++static int drv_pLG_contrast(int contrast)
++{
++    unsigned char cmd[2] = { 0x92 };	/* set contrast */
++
++    if (contrast < 0)
++	contrast = 0;
++    if (contrast > 255)
++	contrast = 255;
++
++    cmd[1] = contrast;
++    drv_pLG_send(cmd, 2);
++
++    return contrast;
++}
++
++
++static int drv_pLG_backlight(int backlight)
++{
++    unsigned char cmd[2] = { 0x91 };	/* set backlight */
++
++    if (backlight < 0)
++	backlight = 0;
++    if (backlight >= 1)
++	backlight = 200;
++
++    cmd[1] = backlight;
++    drv_pLG_send(cmd, 2);
++
++    return backlight;
++}
++
++static int drv_pLG_gpo(int num, int val)
++{
++    unsigned char cmd[2] = { 0x81 };	/* set GPO */
++
++    if (num < 0)
++	num = 0;
++    if (num > 7)
++	num = 7;
++
++    if (val < 0)
++	val = 0;
++    if (val > 1)
++	val = 1;
++
++    /* set led bit to 1 or 0 */
++    if (val)
++	gpo |= 1 << num;
++    else
++	gpo &= ~(1 << num);
++
++    cmd[1] = gpo;
++    //drv_pLG_send(cmd, 2);
++
++    return val;
++}
++
++static int drv_pLG_start(const char *section, const int quiet)
++{
++    int rows = -1, cols = -1;
++    int value;
++    char *s;
++
++    s = cfg_get(section, "Size", NULL);
++    if (s == NULL || *s == '\0') {
++	error("%s: no '%s.Size' entry from %s", Name, section, cfg_source());
++	return -1;
++    }
++    if (sscanf(s, "%dx%d", &cols, &rows) != 2 || rows < 1 || cols < 1) {
++	error("%s: bad %s.Size '%s' from %s", Name, section, s, cfg_source());
++	free(s);
++	return -1;
++    }
++    
++    if (cfg_number(section, "Inverted", 0, 0, 1, &value) > 0) {
++	info("Setting display inverted to %d", value);
++	inverted = value;
++    }
++
++    DROWS = SCREEN_H;
++    DCOLS = SCREEN_W;
++
++    if (drv_pLG_open() < 0) {
++	return -1;
++    }
++
++    /* Init the command buffer */
++    Buffer = (char *) malloc(1024);
++    if (Buffer == NULL) {
++	error("%s: coommand buffer could not be allocated: malloc() failed", Name);
++	return -1;
++    }
++    BufPtr = Buffer;
++    
++    /* Init framebuffer buffer */
++    pLG_framebuffer = malloc(SCREEN_W * SCREEN_H * sizeof(unsigned char));
++    if (! pLG_framebuffer)
++	return -1;
++	
++    DEBUG("allocated");
++    memset(pLG_framebuffer, 0, SCREEN_W * SCREEN_H);
++    DEBUG("zeroed");
++
++    if (cfg_number(section, "Contrast", 0, 0, 255, &value) > 0) {
++	info("Setting contrast to %d", value);
++	drv_pLG_contrast(value);
++    }
++
++    if (cfg_number(section, "Backlight", 0, 0, 1, &value) > 0) {
++	info("Setting backlight to %d", value);
++	drv_pLG_backlight(value);
++    }
++
++    drv_pLG_clear();		/* clear display */
++
++    if (!quiet) {
++	char buffer[40];
++	qprintf(buffer, sizeof(buffer), "%s %dx%d", Name, SCREEN_W, SCREEN_H);
++	if (drv_generic_graphic_greet(buffer, "http://www.picolcd.com")) {
++	    sleep(3);
++	    drv_pLG_clear();
++	}
++    }
++
++    return 0;
++}
++
++
++/****************************************/
++/***            plugins               ***/
++/****************************************/
++
++static void plugin_contrast(RESULT * result, RESULT * arg1)
++{
++    double contrast;
++
++    contrast = drv_pLG_contrast(R2N(arg1));
++    SetResult(&result, R_NUMBER, &contrast);
++}
++
++static void plugin_backlight(RESULT * result, RESULT * arg1)
++{
++    double backlight;
++
++    backlight = drv_pLG_backlight(R2N(arg1));
++    SetResult(&result, R_NUMBER, &backlight);
++}
++
++static void plugin_gpo(RESULT * result, RESULT * argv[])
++{
++    double gpo;
++    gpo = drv_pLG_gpo(R2N(argv[0]), R2N(argv[1]));
++    SetResult(&result, R_NUMBER, &gpo);
++}
++
++
++/****************************************/
++/***        widget callbacks          ***/
++/****************************************/
++
++
++/* using drv_generic_text_draw(W) */
++/* using drv_generic_text_icon_draw(W) */
++/* using drv_generic_text_bar_draw(W) */
++
++
++/****************************************/
++/***        exported functions        ***/
++/****************************************/
++
++
++/* list models */
++int drv_pLG_list(void)
++{
++    printf("picoLCD 256x64 Graphic LCD");
++    return 0;
++}
++
++
++/* initialize driver & display */
++int drv_pLG_init(const char *section, const int quiet)
++{
++    int ret;
++
++    info("%s: %s", Name, "$Rev: 840 $");
++    
++    info("PICOLCD Graphic initialization\n");
++
++    /* display preferences */
++    XRES = 6;			/* pixel width of one char  */
++    YRES = 8;			/* pixel height of one char  */
++    GPOS = 8;
++    
++    /* real worker functions */
++    drv_generic_graphic_real_blit = drv_pLG_blit;
++    
++    /* start display */
++    if ((ret = drv_pLG_start(section, quiet)) != 0)
++	return ret;
++
++    
++    /* initialize generic graphic driver */
++    if ((ret = drv_generic_graphic_init(section, Name)) != 0)
++	return ret;
++
++    /* GPO's init */
++    
++    if ((ret = drv_generic_gpio_init(section, Name)) != 0)
++	return ret;
++    
++    /* register plugins */
++    
++    AddFunction("LCD::contrast", -1, plugin_contrast);
++    AddFunction("LCD::backlight", -1, plugin_backlight);
++    AddFunction("LCD::gpo", -1, plugin_gpo);
++    
++    return 0;
++}
++
++
++/* close driver & display */
++int drv_pLG_quit(const int quiet)
++{
++
++    info("%s: shutting down.", Name);
++
++    drv_generic_graphic_quit();
++
++    /* clear display */
++    drv_pLG_clear();
++
++    /* say goodbye... */
++    if (!quiet) {
++	drv_generic_graphic_greet("goodbye!", NULL);
++    }
++
++    drv_pLG_close();
++
++    if (Buffer) {
++	free(Buffer);
++	BufPtr = NULL;
++    }
++
++    return (0);
++}
++
++
++DRIVER drv_picoLCDGraphic = {
++    .name = Name,
++    .list = drv_pLG_list,
++    .init = drv_pLG_init,
++    .quit = drv_pLG_quit,
++};
+diff -urN lcd4linux/lcd4linux.conf.sample lcd4linux-picoLCDGraphic/lcd4linux.conf.sample
+--- lcd4linux/lcd4linux.conf.sample	2008-07-10 13:04:27.000000000 +0300
++++ lcd4linux-picoLCDGraphic/lcd4linux.conf.sample	2008-07-10 11:51:55.000000000 +0300
+@@ -254,6 +254,13 @@
+     Icons     1
+ }
+ 
++Display picoLCDGraphic {
++    Driver 'picoLCDGraphic'
++    Size     '256x64'
++    Contrast  0
++    Backlight 100
++}
++
+ Display SC1602D {
+     Driver 'HD44780'
+     Port '/dev/parports/0'	
+diff -urN lcd4linux/Makefile.am lcd4linux-picoLCDGraphic/Makefile.am
+--- lcd4linux/Makefile.am	2008-07-10 13:04:27.000000000 +0300
++++ lcd4linux-picoLCDGraphic/Makefile.am	2008-07-10 12:22:30.000000000 +0300
+@@ -89,6 +89,7 @@
+ drv_NULL.c                    \
+ drv_Pertelian                 \
+ drv_picoLCD.c                 \
++drv_picoLCDGraphic.c          \
+ drv_RouterBoard.c             \
+ drv_Sample.c                  \
+ drv_st2205.c                  \
+diff -urN lcd4linux/Makefile.in lcd4linux-picoLCDGraphic/Makefile.in
+--- lcd4linux/Makefile.in	2008-07-10 13:04:27.000000000 +0300
++++ lcd4linux-picoLCDGraphic/Makefile.in	2008-07-10 11:52:07.000000000 +0300
+@@ -288,6 +288,7 @@
+ drv_NULL.c                    \
+ drv_Pertelian                 \
+ drv_picoLCD.c                 \
++drv_picoLCDGraphic.c          \
+ drv_RouterBoard.c             \
+ drv_Sample.c                  \
+ drv_st2205.c                  \
+diff -urN lcd4linux/smoketest.sh lcd4linux-picoLCDGraphic/smoketest.sh
+--- lcd4linux/smoketest.sh	2008-07-10 13:04:27.000000000 +0300
++++ lcd4linux-picoLCDGraphic/smoketest.sh	2008-07-10 11:49:46.000000000 +0300
+@@ -9,7 +9,7 @@
+ make distclean
+ ./bootstrap
+ 
+-for driver in BeckmannEgle BWCT CrystalFontz Curses Cwlinux EA232graphic G15 HD44780 LCD2USB LCDLinux LCDTerm LEDMatrix LPH7508 LUIse M50530 MatrixOrbital MilfordInstruments Noritake NULL Pertelian picoLCD PNG PPM RouterBoard Sample serdisplib SimpleLCD T6963 Trefon USBHUB USBLCD WincorNixdorf X11; do
++for driver in BeckmannEgle BWCT CrystalFontz Curses Cwlinux EA232graphic G15 HD44780 LCD2USB LCDLinux LCDTerm LEDMatrix LPH7508 LUIse M50530 MatrixOrbital MilfordInstruments Noritake NULL Pertelian picoLCD picoLCDGraphic PNG PPM RouterBoard Sample serdisplib SimpleLCD T6963 Trefon USBHUB USBLCD WincorNixdorf X11; do
+ 
+     make distclean
+     ./configure --with-drivers=$driver
+diff -urN lcd4linux/.svn/entries lcd4linux-picoLCDGraphic/.svn/entries
+--- lcd4linux/.svn/entries	2008-07-10 13:04:27.000000000 +0300
++++ lcd4linux-picoLCDGraphic/.svn/entries	2008-07-10 09:36:38.000000000 +0300
+@@ -32,7 +32,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 9e9c44273dde5b20cd9ea29d7cfa4699
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -45,7 +45,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ af9e483bfcfefa38ed905172d594d9c9
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -58,7 +58,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ cdf4f9ecc3b8eb7da1f69dc53ac67944
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -71,7 +71,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 2022bcddcea8bc3133d524c3c7cd4a8f
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -84,7 +84,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ c148113203c733377b11c2f279e7c101
+ 2007-01-14T13:50:28.900653Z
+ 730
+@@ -97,7 +97,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ c352c5b968b0697d983a6c88a3d7dd35
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -110,7 +110,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 7b0ca2e0cf493a1ae67948d5a49a4549
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -123,7 +123,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 2797d8c907831e023a2276eaccc7e598
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -136,7 +136,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ d1671692f442e5bdf2c206668d0a4b1f
+ 2007-01-16T08:30:24.402278Z
+ 738
+@@ -149,7 +149,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ c6736b80d567942d270de8cedada10ae
+ 2008-03-03T16:52:50.082908Z
+ 855
+@@ -162,7 +162,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 6dace498a8721a8082b2bdac7f48ab5e
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -175,7 +175,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 94d55d512a9ba36caa9b7df079bae19f
+ 2000-03-10T12:02:43.000000Z
+ 8
+@@ -187,7 +187,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 9959ad24b36d2fc1e5257745be96ebb2
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -200,7 +200,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 06459f21b101d5fb00c22a7c6086d014
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -213,7 +213,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 4d39d504c42afd4727fc8c2c57f6d705
+ 2007-01-14T11:14:38.826887Z
+ 728
+@@ -226,7 +226,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ b0194d9cbc053617638f1f1ef664c1a8
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -239,7 +239,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 485ea766ad237a3c5283d0bd8691a8ad
+ 2007-05-04T11:35:52.499894Z
+ 798
+@@ -252,7 +252,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ b0618512d5e673a8e715a6db482ff309
+ 2007-01-14T11:14:38.826887Z
+ 728
+@@ -265,7 +265,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 3aa671400a07178c55c9ee0740fd2539
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -278,7 +278,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 9670c38add088ee5e92268a2ceedc707
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -291,7 +291,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 17f5a81ff71881c195dbdfc04fa867ba
+ 2008-03-03T16:52:50.082908Z
+ 855
+@@ -304,7 +304,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 3fe6e698072b476d80680735a50b9f44
+ 2007-04-30T05:29:22.512891Z
+ 795
+@@ -316,7 +316,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 1da54de4e37c99d3036588b413607337
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -329,7 +329,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 1e49b69545fcb0b4c5b1fa59918181e5
+ 2008-03-03T17:03:00.083165Z
+ 860
+@@ -342,7 +342,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 88f2ac60ac427676de17c7450640e205
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -355,7 +355,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 196ffc4e92707d887ef13ab3e98fcaef
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -368,7 +368,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ a85b2630105e73a1d3e74650308077d9
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -381,7 +381,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 649d7e4be9d2c67ceebddbabb6ef5aa0
+ 2008-03-03T17:03:00.083165Z
+ 860
+@@ -394,7 +394,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 326a2d16ea1d2317c0be785a1a9063fc
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -407,7 +407,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 5cc0dcd7da58b690db52c7dbef3ece2e
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -420,7 +420,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 94e1dac8bdfc30f70efbe4b3e282f00d
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -433,7 +433,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 0ab481bc660d45a815c80294577a3df5
+ 2007-05-02T05:10:55.971219Z
+ 797
+@@ -446,7 +446,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 1dd691e67211afadf66a0aa0325d3129
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -459,7 +459,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ fc113ae8b782d28a560503892cce2fa3
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -472,7 +472,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 039e94d002ec393e6bff0bc9fd1b2b90
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -485,7 +485,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 285c2b10ce77b0762011381a0db3e5c0
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -498,7 +498,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 09e353b7663e5a5200898ef566fbf7c7
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -511,7 +511,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 1ae637a0e4e35350bca93cd9dd0e5051
+ 2007-10-01T15:04:49.332653Z
+ 843
+@@ -524,7 +524,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ 6a13cf7126285efb20f634f9ab71698b
+ 2008-04-15T09:56:44.505913Z
+ 877
+@@ -537,7 +537,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:37.000000Z
+ f57ca5f9814cce0fcec07bc2e6c6d785
+ 2007-01-14T11:14:38.826887Z
+ 728
+@@ -550,7 +550,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ d3c40d5584f2a306bbc0c205f7ce900c
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -563,7 +563,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 27c5bdb3f47abf6cb3e13413e3da0b8a
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -576,7 +576,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 9dd542829100dfd8bd10d49a7f125759
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -589,7 +589,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ e29bfbd04d208b75881605e2bad77d19
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -602,7 +602,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 7e186e145fe5c523dd49b0e2521dd5fe
+ 2007-01-14T13:44:38.283907Z
+ 729
+@@ -615,7 +615,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 3e47cb5e8b78144a240bd27a1468d23b
+ 2008-04-12T17:31:52.750669Z
+ 874
+@@ -628,7 +628,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ bed197e5b32b4773b5669e848a05abb2
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -641,7 +641,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 5c9b310a18d905ff8a20633379afb1ca
+ 2007-01-14T13:50:28.900653Z
+ 730
+@@ -654,7 +654,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 78c18885ecc353832179e71371ca570e
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -667,7 +667,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ e2c24000738952a2b457f88e1f011ca5
+ 2008-04-12T17:26:24.400833Z
+ 873
+@@ -680,7 +680,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 451d1b58a3c26590b501a41a3f1f6f56
+ 2007-03-21T05:01:11.354992Z
+ 782
+@@ -693,7 +693,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 4e7dd3e08f6fa40b25a0b4e5bdfa672a
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -706,7 +706,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 0180f120fccd494b0805f3a16589a3e4
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -719,7 +719,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 379a6f45424db1255b150e256befa7c8
+ 2007-01-14T11:14:38.826887Z
+ 728
+@@ -732,7 +732,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ a4a5cf0ac49e4638451310c859014ad7
+ 2007-01-14T13:50:28.900653Z
+ 730
+@@ -745,7 +745,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ d3235827b9947c2d538d3bd6d661c975
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -758,7 +758,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ a2612be53d8aaa5e3bdf0bc14742da0c
+ 2007-01-20T05:00:06.501740Z
+ 748
+@@ -771,7 +771,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ b6dc4a747950705de2862b4589d65f7f
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -784,7 +784,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 39cadb81e28320db8b04533e93395495
+ 2008-03-03T16:54:18.123449Z
+ 856
+@@ -797,7 +797,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ fb934dcbdd02d8082ce48826d354ddba
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -810,7 +810,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 4fff8f04022f937ea38834facdb5a93c
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -823,7 +823,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ ce6b739ab4b2eec3c9aef6df29f4b528
+ 2007-01-14T13:44:38.283907Z
+ 729
+@@ -836,7 +836,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ e8aef373dd8a07da0d72efd624bb5908
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -849,7 +849,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ fa40af12b8cd7aec1212e20c12c3a14b
+ 2008-04-10T14:45:45.381184Z
+ 869
+@@ -862,7 +862,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 66fc2ecaec08dbd428662fb5cc49f4cb
+ 2008-04-03T15:59:11.603570Z
+ 864
+@@ -875,7 +875,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 08530c0812d2c28a9d908d90a58b37e6
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -888,7 +888,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 6b97a13b2b07c22c05bf0fde608b46a4
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -901,7 +901,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 226fcc621dfb99a610cd83348370b131
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -914,7 +914,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ f928167ad7232aabbca401b18fe1dd86
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -927,7 +927,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 60b66039dc731b6804363469a2ca8c0b
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -940,7 +940,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ e87178879f704d343eb2eb068bfdb124
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -953,7 +953,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 998e15d6c245041ae1decbd430c01c0a
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -966,7 +966,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 9e50b33591197c5b11a559ed200f5be9
+ 2007-01-14T13:50:28.900653Z
+ 730
+@@ -979,7 +979,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 835e547cf1bd9ff1329e93722f1df4f1
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -992,7 +992,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 0d70a68ba1907a09c5f01c6d3a01b000
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1005,7 +1005,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ d8b6e511f94a62fde596cca73c4503a4
+ 2008-03-03T17:03:00.083165Z
+ 860
+@@ -1018,7 +1018,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ ecd11592b261424372232681efb78f3a
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1031,7 +1031,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 6401731f663b2c8c9187436a21452495
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1044,7 +1044,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ a79e033e0eafd4d29d684e6818634ecc
+ 2008-04-10T14:45:45.381184Z
+ 869
+@@ -1057,7 +1057,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ b5d8fb2be9d94106c537420d78877e80
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1069,7 +1069,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 66e1f7f4397060f1a9f8d97b1b17cbd1
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1082,7 +1082,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 58bb98b8fcb3ee1f447547400d99c410
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1095,7 +1095,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ ff83f075b8b6aa120faa912023924205
+ 2008-01-28T17:03:27.164051Z
+ 849
+@@ -1108,7 +1108,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 67486071993efe21f43bfdcb15f799fb
+ 2008-04-12T17:31:52.750669Z
+ 874
+@@ -1120,7 +1120,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 9e4fc5d43df9cd9ad4b4f44db880e865
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1133,7 +1133,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 56923512be8077a068bcb3892d9ab86f
+ 2003-02-27T07:43:11.000000Z
+ 185
+@@ -1146,7 +1146,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 79c63785573f5931e037c6b9bedfab95
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1159,7 +1159,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 6d94b04a785d30c3ce25fb6e28b1acfb
+ 2007-01-14T13:44:38.283907Z
+ 729
+@@ -1172,7 +1172,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ aba9b9720adffd0875f70836a9521e3d
+ 2008-04-12T17:31:52.750669Z
+ 874
+@@ -1185,7 +1185,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 9e422d6fe7127688b6dd6dd5c9362949
+ 2007-01-14T13:50:28.900653Z
+ 730
+@@ -1198,7 +1198,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ ba4c4d5ebf077cb34bb32509f10f31b4
+ 2007-10-01T15:04:49.332653Z
+ 843
+@@ -1211,7 +1211,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ d7d8db17e074dcabf513d766b728993d
+ 2006-06-25T14:58:38.000000Z
+ 665
+@@ -1223,7 +1223,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ c0e3ddd9f916bc1c56a0ecc72abd390c
+ 2007-01-14T11:14:38.826887Z
+ 728
+@@ -1236,7 +1236,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ f23f92da531fb3cde5a4f9292cd7013e
+ 2008-03-03T16:59:26.006048Z
+ 858
+@@ -1248,7 +1248,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ b9b6bd34e442780ea4c803218aff4d2a
+ 2000-04-15T11:13:54.000000Z
+ 45
+@@ -1260,7 +1260,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ bd6736d1e70640c20f79be7adf01e8b0
+ 2007-04-30T05:32:03.262253Z
+ 796
+@@ -1272,7 +1272,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ ba889ed317d65e9d91cf3a9524c971e2
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1285,7 +1285,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 71378c55b2e61e4707ece7e5634e6ada
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1298,7 +1298,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 31473873dff89a585e5fad0e328a7afa
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -1311,7 +1311,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 8adcbfd8104ff020ef1ae4320777b599
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1324,7 +1324,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 05cc4cb6b8eee75db525fec7abfa44cf
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1337,7 +1337,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 34943415d2fe4b366217bff5b88f3039
+ 2007-02-04T05:55:58.631674Z
+ 759
+@@ -1350,7 +1350,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 9419da30c47b316fb5b8068bc7a340b3
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1363,7 +1363,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ f43f32073604a2d852c330ae2e785179
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1376,7 +1376,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 5b39bf3f5fa0f2e2c633daf71054de39
+ 2007-01-14T13:50:28.900653Z
+ 730
+@@ -1389,7 +1389,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 8ae4b456da9a6fd49d46049d346b4166
+ 2007-01-14T13:50:28.900653Z
+ 730
+@@ -1402,7 +1402,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 79ab1dc243f48c7a017749991aa9ee9b
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1415,7 +1415,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 1d712280dfdb381c0c20f44698360527
+ 2006-09-06T05:22:10.000000Z
+ 707
+@@ -1427,7 +1427,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 618ab65c2721601773e7f4739b35a944
+ 2008-04-10T14:55:23.004335Z
+ 870
+@@ -1440,7 +1440,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ dd71bc5adab0a7f6392a6aa27336ca69
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1453,7 +1453,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 1d9d0a7591d2a1aec68c7c7a7d0f8a57
+ 2007-01-23T04:38:43.181095Z
+ 756
+@@ -1466,7 +1466,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ fd04ab229266543f86e1d20e6481eb08
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1479,7 +1479,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 20b6adf311c2dad544b7d3a31b83bcb1
+ 2001-03-01T15:11:30.000000Z
+ 91
+@@ -1491,7 +1491,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 557f5391852d4d2cf55b5f132a2a2ee3
+ 2007-05-02T05:10:55.971219Z
+ 797
+@@ -1504,7 +1504,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 5dc6fde646b5c4843928560b40de6d88
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1517,7 +1517,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ c8a59cf624fcaf0f1bbdd6f7274040fe
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1530,7 +1530,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ ecb064c3fd01778ba4b7ee4f0ca797c0
+ 2008-04-12T17:31:52.750669Z
+ 874
+@@ -1542,7 +1542,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ b1b901395a947b9c2708b89a6b1d2008
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1555,7 +1555,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 6bd195d5c3d48826941adad86cf6a614
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -1568,7 +1568,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ d22dffbcd77332893289205dc917f4fd
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1581,7 +1581,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 18e11f0ae9b08e99965ecf282fad7c9d
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1594,7 +1594,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 3b861bc06fc85d8e088196d4ceb24068
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1607,7 +1607,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 3e532fe7f2a7d4ab7c573244ad5ffb6d
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1620,7 +1620,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 4f906a2ff0b2b4d3de3e432876ff268d
+ 2008-04-12T17:31:52.750669Z
+ 874
+@@ -1633,7 +1633,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ a29ea259c5132fb211f3f4d5d0c49b2d
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1646,7 +1646,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 881e810c53c4008f3ba9099ffcc85631
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1659,7 +1659,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ a1c81861fbb9169f6b73d8b19cab55f0
+ 2008-04-04T08:42:02.391096Z
+ 866
+@@ -1671,7 +1671,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 2825503fb42f4c8357c85b31411461e4
+ 2007-02-26T10:29:46.950061Z
+ 774
+@@ -1684,7 +1684,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 10347aebb2819e65eea593ad6d697bd2
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1697,7 +1697,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ c8191e0eafbbda6760f81a6647b3c23e
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1710,7 +1710,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 4d061419ce74f53c84a52eb9c19673fb
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1723,7 +1723,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 82f626c674bfcec0181cc218136336f5
+ 2008-04-12T17:31:52.750669Z
+ 874
+@@ -1736,7 +1736,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 31f1a06b5930504b9dce02526f3571fa
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1748,7 +1748,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 9ec1ff5dfe4aa8e5e6f2afc26d0576aa
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -1761,7 +1761,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 4a6e9c8babb8f1fb76ddf5e1f0bb90b8
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1774,7 +1774,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 275da8b79a518015b8eaba6e54fe2d61
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1787,7 +1787,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ b13464e820132bfb501d9d6bff9645c2
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1800,7 +1800,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ e1add1545eb87eec4f70e3181183561a
+ 2001-03-01T15:11:30.000000Z
+ 91
+@@ -1813,7 +1813,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 1ca79b25cbc636ae33cc3b2a906d7649
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1826,7 +1826,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 056b9e23cb023e9478b828c3e6935526
+ 2007-02-25T12:27:26.484185Z
+ 771
+@@ -1839,7 +1839,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ f73ce97de26e0d7d095e4d273d70e8f1
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1852,7 +1852,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 50b90f6cf2393107ad5a8c3111990d70
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1865,7 +1865,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ eca90c423a6cc164cef344e67eb5ebfb
+ 2008-04-03T16:05:38.109714Z
+ 865
+@@ -1878,7 +1878,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ d6cedb05cda80e27439c113c45cbabaf
+ 2008-03-03T17:04:12.985101Z
+ 861
+@@ -1890,7 +1890,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 1cf0d0e5e9579c84263dc0fb18c84f4c
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1903,7 +1903,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 99343a3b466d818cc1f23d0c2ecbb3e2
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1916,7 +1916,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ efacacc4aa3e72c9a4e32736ef4a579d
+ 2007-01-14T11:14:38.826887Z
+ 728
+@@ -1929,7 +1929,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 070137334dc5e37d6033ac6d629f1ae6
+ 2007-01-14T13:51:41.950730Z
+ 731
+@@ -1942,7 +1942,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ b501e4d466befaa451c1277bccbf27f4
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1955,7 +1955,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ f4759da3c50f46d871d6b51508c3926d
+ 2007-01-14T13:44:38.283907Z
+ 729
+@@ -1968,7 +1968,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 122f3a0034d572acd9a20d6274e745c6
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1981,7 +1981,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 9e507b74058b2211f5ec4f6f851990a2
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -1994,7 +1994,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 1421eb2f054ce7c58cd43c927ca7c509
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2007,7 +2007,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 19583e37ade0ff31e16da7253339f0f3
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2020,7 +2020,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 4be721939a4e4c54e3403c9c9239cdfb
+ 2008-04-03T15:59:11.603570Z
+ 864
+@@ -2033,7 +2033,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 4cb03dca17e8c56381a1f1d5d0a2ca08
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2046,7 +2046,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ e8ef28a561ddb0fd5af127bde4d54ea1
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2059,7 +2059,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 7dedb954d14617d0e8d21a3e85cdbe00
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2072,7 +2072,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ ad3c43fc1eae3e4bdb449ee1424374f4
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2085,7 +2085,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 1bfd4b4b82aa18afa28bfe40d020ed25
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2098,7 +2098,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ f8e7f4945425dcf408564741a508bce8
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2111,7 +2111,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 61ae9fc9b8218a216bb2752ec744003e
+ 2007-10-01T15:49:21.316713Z
+ 844
+@@ -2124,7 +2124,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 138ef882053ec97d43b4a51d6564e23d
+ 2007-01-14T13:50:28.900653Z
+ 730
+@@ -2137,7 +2137,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ f982ce17a8b334494f169a7527dc5225
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2150,7 +2150,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 7f290ea81b96550e69e978a3e422d71d
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2163,7 +2163,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 8d36faff5879ad9e2edad25b58125ebe
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2176,7 +2176,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 0d0fc28f06d7cebfe76cc9d3908b2da5
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2189,7 +2189,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ e2279a88b80125e5b1dd07bd53ee8733
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2202,7 +2202,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 5d58f0dd4262171a71b65bd515d85d07
+ 2006-09-06T05:22:10.000000Z
+ 707
+@@ -2215,7 +2215,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 6e714263d9f9ea4a61bd31368f737113
+ 2007-09-09T12:17:42.903272Z
+ 840
+@@ -2228,7 +2228,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ cf29de7479b6c5852535330678f8399b
+ 2000-04-03T17:31:52.000000Z
+ 37
+@@ -2240,7 +2240,7 @@
+ 
+ 
+ 
+-2008-07-10T10:04:27.000000Z
++2008-07-10T06:36:38.000000Z
+ 3a60d4d703420f21541ab03e02c4723e
+ 2007-03-21T05:01:11.354992Z
+ 782

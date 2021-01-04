@@ -1,0 +1,893 @@
+Index: drivers.m4
+===================================================================
+--- drivers.m4	(revision 746)
++++ drivers.m4	(working copy)
+@@ -35,7 +35,7 @@
+   [                        BeckmannEgle, BWCT, CrystalFontz, Curses, Cwlinux,]
+   [                        G15, HD44780, LCD2USB LCDLinux, LCDTerm, LPH7508,]
+   [                        LUIse, M50530, MatrixOrbital, MilfordInstruments,]
+-  [                        Noritake, NULL, PNG, PPM, RouterBoard, Sample,]
++  [                        Noritake, NULL, PNG, PPM, picoLCD, RouterBoard, Sample,]
+   [                        serdisplib, SimpleLCD, T6963, Trefon, USBLCD,]
+   [                        USBHUB, WincorNixdorf, X11],
+   drivers=$withval, 
+@@ -76,9 +76,10 @@
+          MILINST="yes"
+          NORITAKE="yes" 
+          NULL="yes" 
++         picoLCD="yes"
+          PNG="yes"
+          PPM="yes"
+-	 ROUTERBOARD="yes"
++         ROUTERBOARD="yes"
+          SAMPLE="yes"
+ 	 SERDISPLIB="yes"
+          SIMPLELCD="yes"
+@@ -146,6 +147,9 @@
+       NULL)
+          NULL=$val;
+          ;;
++      picoLCD)
++         picoLCD=$val
++         ;;         
+       PNG)
+          PNG=$val
+          ;;
+@@ -375,6 +379,15 @@
+    AC_DEFINE(WITH_NULL,1,[NULL driver])
+ fi
+ 
++if test "$picoLCD" = "yes"; then
++   TEXT="yes"
++   GPIO="yes"
++   SERIAL="yes"
++   #I2C="yes"
++   DRIVERS="$DRIVERS drv_picoLCD.o"
++   AC_DEFINE(WITH_picoLCD,1,[picoLCD driver])
++fi
++
+ if test "$PNG" = "yes"; then
+    if test "$has_gd" = "true"; then
+       IMAGE="yes"
+Index: drv_picoLCD.c
+===================================================================
+--- drv_picoLCD.c	(revision 744)
++++ drv_picoLCD.c	(working copy)
+@@ -1,11 +1,13 @@
+ /* $Id$
+  * $URL$
+  *
+- * sample lcd4linux driver
++ * driver for picoLCD displays from mini-box.com
+  *
+  * Copyright (C) 2005 Michael Reinelt <reinelt@eunet.at>
+  * Copyright (C) 2005, 2006, 2007 The LCD4Linux Team <lcd4linux-devel@users.sourceforge.net>
+  *
++ * Copyright (C) 2007 Nicu Pavel, Mini-Box.com <npavel@mini-box.com>
++ *
+  * This file is part of LCD4Linux.
+  *
+  * LCD4Linux is free software; you can redistribute it and/or modify
+@@ -28,7 +30,7 @@
+  *
+  * exported fuctions:
+  *
+- * struct DRIVER drv_Sample
++ * struct DRIVER drv_picoLCD
+  *
+  */
+ 
+@@ -36,10 +38,18 @@
+ 
+ #include <stdlib.h>
+ #include <stdio.h>
+-#include <unistd.h>
+ #include <string.h>
+ #include <errno.h>
++#include <unistd.h>
++#include <termios.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++#include <sys/time.h>
+ 
++#ifdef HAVE_USB_H
++#include <usb.h>
++#endif
++
+ #include "debug.h"
+ #include "cfg.h"
+ #include "qprintf.h"
+@@ -50,235 +60,241 @@
+ #include "widget_icon.h"
+ #include "widget_bar.h"
+ #include "drv.h"
+-
+-/* text mode display? */
+ #include "drv_generic_text.h"
++#include "drv_generic_gpio.h"
++#include "drv_generic_keypad.h"
+ 
+-/* graphic display? */
+-#include "drv_generic_graphic.h"
+ 
+-/* GPO's? */
+-#include "drv_generic_gpio.h"
+ 
+-/* serial port? */
+-#include "drv_generic_serial.h"
++#define picoLCD_VENDOR  0x04d8
++#define picoLCD_DEVICE  0x0002
+ 
+-/* parallel port? */
+-#include "drv_generic_parport.h"
++static char Name[] = "picoLCD";
+ 
+-/* i2c bus? */
+-#ifdef WITH_I2C
+-#include "drv_generic_i2c.h"
+-#endif
++static int use_libusb = 1;
++static unsigned int gpo = 0;
+ 
++static char *Buffer;
++static char *BufPtr;
+ 
+-static char Name[] = "Sample";
++#ifdef HAVE_USB_H
+ 
++static usb_dev_handle *lcd;
++static int interface;
+ 
+-/* for parallel port displays only */
+-/* use whatever lines you need */
+-static unsigned char SIGNAL_RS;
+-static unsigned char SIGNAL_EX;
++extern int usb_debug;
+ 
++#endif
+ 
+ 
++
+ /****************************************/
+ /***  hardware dependant functions    ***/
+ /****************************************/
+ 
+-/* low-level parallel port stuff */
+-/* example for sending one byte over the wire */
+-static void drv_Sample_bang(const unsigned int data)
++#ifdef HAVE_USB_H
++
++static int drv_pL_open(void)
+ {
+-    /* put data on DB1..DB8 */
+-    drv_generic_parport_data(data & 0xff);
++    struct usb_bus *busses, *bus;
++    struct usb_device *dev;
++    char buf[1024];
++    int ret;
+ 
+-    /* set/clear some signals */
+-    drv_generic_parport_control(SIGNAL_RS, SIGNAL_RS);
++    lcd = NULL;
+ 
+-    /* data setup time (e.g. 200 ns) */
+-    ndelay(200);
++    info("%s: scanning for picoLCD...", Name);
+ 
+-    /* send byte */
+-    /* signal pulse width 500ns */
+-    drv_generic_parport_toggle(SIGNAL_EX, 1, 500);
++    usb_debug = 0;
+ 
+-    /* wait for command completion (e.g. 100 us) */
+-    udelay(100);
+-}
++    usb_init();
++    usb_find_busses();
++    usb_find_devices();
++    busses = usb_get_busses();
+ 
++    for (bus = busses; bus; bus = bus->next) {
++	for (dev = bus->devices; dev; dev = dev->next) {
++	    if ((dev->descriptor.idVendor == picoLCD_VENDOR) && (dev->descriptor.idProduct == picoLCD_DEVICE)) {
+ 
+-static int drv_Sample_open(const char *section)
+-{
+-    /* open serial port */
+-    /* don't mind about device, speed and stuff, this function will take care of */
++		info("%s: found picoLCD on bus %s device %s", Name, bus->dirname, dev->filename);
+ 
+-    if (drv_generic_serial_open(section, Name, 0) < 0)
+-	return -1;
++		interface = 0;
++		lcd = usb_open(dev);
+ 
++		ret = usb_get_driver_np(lcd, 0, buf, sizeof(buf));
+ 
+-    /* opening the parallel port is a bit more tricky: */
+-    /* you have to do all the bit-banging yourself... */
++		if (ret == 0) {
++		    info("interface 0 already claimed attempting to detach it\n");
++		    ret = usb_detach_kernel_driver_np(lcd, 0);
++		    printf("usb_detach_kernel_driver_np returned %d\n", ret);
++		}
+ 
+-    if (drv_generic_parport_open(section, Name) != 0) {
+-	error("%s: could not initialize parallel port!", Name);
+-	return -1;
++		if (usb_claim_interface(lcd, interface) < 0) {
++		    error("%s: usb_claim_interface() failed!", Name);
++		    return -1;
++		}
++		return 0;
++	    }
++	}
+     }
+-
+-    /* read the wiring from config */
+-    if ((SIGNAL_EX = drv_generic_parport_wire_ctrl("EX", "STROBE")) == 0xff)
+-	return -1;
+-    if ((SIGNAL_RS = drv_generic_parport_wire_ctrl("RS", "INIT")) == 0xff)
+-	return -1;
+-
+-    /* clear all signals */
+-    drv_generic_parport_control(SIGNAL_EX | SIGNAL_RS, 0);
+-
+-    /* set direction: write */
+-    drv_generic_parport_direction(0);
+-
+-    return 0;
++    error("%s: could not find a picoLCD", Name);
++    return -1;
+ }
+ 
+ 
+-static int drv_Sample_close(void)
++static int drv_pL_close(void)
+ {
+-    /* close whatever port you've opened */
+-    drv_generic_parport_close();
+-    drv_generic_serial_close();
++    usb_release_interface(lcd, interface);
++    usb_close(lcd);
+ 
+     return 0;
+ }
+ 
++#endif
+ 
+-/* dummy function that sends something to the display */
+-static void drv_Sample_send(const char *data, const unsigned int len)
++
++static void drv_pL_send(void)
+ {
+-    unsigned int i;
+ 
+-    /* send data to the serial port is easy... */
+-    drv_generic_serial_write(data, len);
++#if 0
++    struct timeval now, end;
++    gettimeofday(&now, NULL);
++#endif
+ 
+-    /* sending data to the parallel port is a bit more tricky... */
+-    for (i = 0; i < len; i++) {
+-	drv_Sample_bang(*data++);
++    if (use_libusb) {
++#ifdef HAVE_USB_H
++	usb_bulk_write(lcd, USB_ENDPOINT_OUT + 1, Buffer, BufPtr - Buffer, 1000);
++#endif
+     }
++
++#if 0
++    gettimeofday(&end, NULL);
++    debug("send %d bytes in %d usec (%d usec/byte)", BufPtr - Buffer,
++	  (1000000 * (end.tv_sec - now.tv_sec) + end.tv_usec - now.tv_usec),
++	  (1000000 * (end.tv_sec - now.tv_sec) + end.tv_usec - now.tv_usec) / (BufPtr - Buffer));
++#endif
++
++    BufPtr = Buffer;
+ }
+ 
+ 
+-/* text mode displays only */
+-static void drv_Sample_clear(void)
++static void drv_pL_command(const unsigned char cmd)
+ {
+-    char cmd[1];
+-
+-    /* do whatever is necessary to clear the display */
+-    /* assume 0x01 to be a 'clear display' command */
+-    cmd[0] = 0x01;
+-    drv_Sample_send(cmd, 1);
++    *BufPtr++ = cmd;
+ }
+ 
+ 
+-/* text mode displays only */
+-static void drv_Sample_write(const int row, const int col, const char *data, int len)
++static void drv_pL_clear(void)
+ {
+-    char cmd[3];
++    drv_pL_command(0x94);	/* clear display */
++    drv_pL_send();		/* flush buffer */
++}
+ 
+-    /* do the cursor positioning here */
+-    /* assume 0x02 to be a 'Goto' command */
+-    cmd[0] = 0x02;
+-    cmd[1] = row;
+-    cmd[2] = col;
+-    drv_Sample_send(cmd, 3);
++static int drv_pL_contrast(int contrast)
++{
+ 
+-    /* send string to the display */
+-    drv_Sample_send(data, len);
++    if (contrast < 0)
++	contrast = 0;
++    if (contrast > 255)
++	contrast = 255;
+ 
++    drv_pL_command(0x92);
++    drv_pL_command(contrast);
++
++    drv_pL_send();
++
++    return contrast;
+ }
+ 
+-/* text mode displays only */
+-static void drv_Sample_defchar(const int ascii, const unsigned char *matrix)
++
++static int drv_pL_backlight(int backlight)
+ {
+-    char cmd[10];
+-    int i;
++    if (backlight < 0)
++	backlight = 0;
++    if (backlight > 1)
++	backlight = 1;
+ 
+-    /* call the 'define character' function */
+-    /* assume 0x03 to be the 'defchar' command */
+-    cmd[0] = 0x03;
+-    cmd[1] = ascii;
++    drv_pL_command(0x91);
++    drv_pL_command(backlight);
+ 
+-    /* send bitmap to the display */
+-    for (i = 0; i < 8; i++) {
+-	cmd[i + 2] = *matrix++;
+-    }
+-    drv_Sample_send(cmd, 10);
++    drv_pL_send();
++
++    return backlight;
+ }
+ 
+-
+-/* for graphic displays only */
+-static void drv_Sample_blit(const int row, const int col, const int height, const int width)
++static int drv_pL_gpo(int num, int val)
+ {
+-    int r, c;
++    if (num < 0)
++	num = 0;
++    if (num > 7)
++	num = 7;
+ 
+-    for (r = row; r < row + height; r++) {
+-	for (c = col; c < col + width; c++) {
+-	    /* drv_generic_graphic_black() returns 1 if pixel is black */
+-	    /* drv_generic_graphic_gray() returns a gray value 0..255 */
+-	    /* drv_generic_graphic_rgb() returns a RGB color */
+-	    if (drv_generic_graphic_black(r, c)) {
+-		/* set bit */
+-	    } else {
+-		/* clear bit */
+-	    }
+-	}
+-    }
++    if (val < 0)
++	val = 0;
++    if (val > 1)
++	val = 1;
++
++    /* set led bit to 1 or 0 */
++    if (val)
++	gpo |= 1 << num;
++    else
++	gpo &= ~(1 << num);
++
++    drv_pL_command(0x81);
++    drv_pL_command(gpo);
++
++    return val;
+ }
+ 
+ 
+-/* remove unless you have GPO's */
+-static int drv_Sample_GPO(const int num, const int val)
++static void drv_pL_write(const int row, const int col, const char *data, int len)
+ {
+-    char cmd[4];
+ 
+-    /* assume 0x42 to be the 'GPO' command */
+-    cmd[0] = 0x42;
+-    cmd[1] = num;
+-    cmd[2] = (val > 0) ? 1 : 0;
++    drv_pL_command(0x98);
++    drv_pL_command(row);
++    drv_pL_command(col);
++    drv_pL_command(len);
+ 
+-    drv_Sample_send(cmd, 3);
++    while (len--) {
++	if (*data == 0)
++	    *BufPtr++ = 0;
++	*BufPtr++ = *data++;
++    }
+ 
+-    return 0;
++    drv_pL_send();
+ }
+ 
+-
+-/* example function used in a plugin */
+-static int drv_Sample_contrast(int contrast)
++static void drv_pL_defchar(const int ascii, const unsigned char *matrix)
+ {
+-    char cmd[2];
++    int i;
+ 
+-    /* adjust limits according to the display */
+-    if (contrast < 0)
+-	contrast = 0;
+-    if (contrast > 255)
+-	contrast = 255;
++    drv_pL_command(0x9c);
++    drv_pL_command(ascii);
+ 
+-    /* call a 'contrast' function */
+-    /* assume 0x04 to be the 'set contrast' command */
+-    cmd[0] = 0x04;
+-    cmd[1] = contrast;
+-    drv_Sample_send(cmd, 2);
++    for (i = 0; i < 8; i++) {
++	if ((*matrix & 0x1f) == 0)
++	    *BufPtr++ = 0;
++	*BufPtr++ = *matrix++ & 0x1f;
++    }
+ 
+-    return contrast;
++    drv_pL_send();
+ }
+ 
+ 
+-/* start text mode display */
+-static int drv_Sample_start(const char *section)
++static int drv_pL_start(const char *section, const int quiet)
+ {
+-    int contrast;
+     int rows = -1, cols = -1;
++    int value;
+     char *s;
+-    char cmd[1];
+ 
++#ifdef HAVE_USB_H
++    use_libusb = 1;
++    debug("using libusb");
++#else
++    error("%s: lcd4linux was compiled without libusb support!", Name);
++    return -1;
++#endif
++
+     s = cfg_get(section, "Size", NULL);
+     if (s == NULL || *s == '\0') {
+ 	error("%s: no '%s.Size' entry from %s", Name, section, cfg_source());
+@@ -293,85 +309,43 @@
+     DROWS = rows;
+     DCOLS = cols;
+ 
+-    /* number of GPO's; remove if you don't have them */
+-    GPOS = 8;
+ 
+-    /* open communication with the display */
+-    if (drv_Sample_open(section) < 0) {
++#ifdef HAVE_USB_H
++    if (drv_pL_open() < 0) {
+ 	return -1;
+     }
++#endif
+ 
+-    /* reset & initialize display */
+-    /* assume 0x00 to be a 'reset' command */
+-    cmd[0] = 0x00;
+-    drv_Sample_send(cmd, 0);
+ 
+-    if (cfg_number(section, "Contrast", 0, 0, 255, &contrast) > 0) {
+-	drv_Sample_contrast(contrast);
+-    }
+-
+-    drv_Sample_clear();		/* clear display */
+-
+-    return 0;
+-}
+-
+-
+-/* start graphic display */
+-static int drv_Sample_start2(const char *section)
+-{
+-    char *s;
+-    char cmd[1];
+-    int contrast;
+-
+-    /* read display size from config */
+-    s = cfg_get(section, "Size", NULL);
+-    if (s == NULL || *s == '\0') {
+-	error("%s: no '%s.Size' entry from %s", Name, section, cfg_source());
++    /* Init the command buffer */
++    Buffer = (char *) malloc(1024);
++    if (Buffer == NULL) {
++	error("%s: coommand buffer could not be allocated: malloc() failed", Name);
+ 	return -1;
+     }
++    BufPtr = Buffer;
+ 
+-    DROWS = -1;
+-    DCOLS = -1;
+-    if (sscanf(s, "%dx%d", &DCOLS, &DROWS) != 2 || DCOLS < 1 || DROWS < 1) {
+-	error("%s: bad Size '%s' from %s", Name, s, cfg_source());
+-	return -1;
++    if (cfg_number(section, "Contrast", 0, 0, 255, &value) > 0) {
++	info("Setting contrast to %d\n", value);
++	drv_pL_contrast(value);
+     }
+ 
+-    s = cfg_get(section, "Font", "6x8");
+-    if (s == NULL || *s == '\0') {
+-	error("%s: no '%s.Font' entry from %s", Name, section, cfg_source());
+-	return -1;
++    if (cfg_number(section, "Backlight", 0, 0, 1, &value) > 0) {
++	info("Setting backlight to %d\n", value);
++	drv_pL_backlight(value);
+     }
+ 
+-    XRES = -1;
+-    YRES = -1;
+-    if (sscanf(s, "%dx%d", &XRES, &YRES) != 2 || XRES < 1 || YRES < 1) {
+-	error("%s: bad Font '%s' from %s", Name, s, cfg_source());
+-	return -1;
+-    }
++    drv_pL_clear();		/* clear display */
+ 
+-    /* Fixme: provider other fonts someday... */
+-    if (XRES != 6 && YRES != 8) {
+-	error("%s: bad Font '%s' from %s (only 6x8 at the moment)", Name, s, cfg_source());
+-	return -1;
++    if (!quiet) {
++	char buffer[40];
++	qprintf(buffer, sizeof(buffer), "%s %dx%d", Name, DCOLS, DROWS);
++	if (drv_generic_text_greet(buffer, "http://www.picolcd.com")) {
++	    sleep(3);
++	    drv_pL_clear();
++	}
+     }
+ 
+-    /* you surely want to allocate a framebuffer or something... */
+-
+-    /* open communication with the display */
+-    if (drv_Sample_open(section) < 0) {
+-	return -1;
+-    }
+-
+-    /* reset & initialize display */
+-    /* assume 0x00 to be a 'reset' command */
+-    cmd[0] = 0x00;
+-    drv_Sample_send(cmd, 1);
+-
+-    if (cfg_number(section, "Contrast", 0, 0, 255, &contrast) > 0) {
+-	drv_Sample_contrast(contrast);
+-    }
+-
+     return 0;
+ }
+ 
+@@ -384,11 +358,26 @@
+ {
+     double contrast;
+ 
+-    contrast = drv_Sample_contrast(R2N(arg1));
++    contrast = drv_pL_contrast(R2N(arg1));
+     SetResult(&result, R_NUMBER, &contrast);
+ }
+ 
++static void plugin_backlight(RESULT * result, RESULT * arg1)
++{
++    double backlight;
+ 
++    backlight = drv_pL_backlight(R2N(arg1));
++    SetResult(&result, R_NUMBER, &backlight);
++}
++
++static void plugin_gpo(RESULT * result, RESULT * argv[])
++{
++    double gpo;
++    gpo = drv_pL_gpo(R2N(argv[0]), R2N(argv[1]));
++    SetResult(&result, R_NUMBER, &gpo);
++}
++
++
+ /****************************************/
+ /***        widget callbacks          ***/
+ /****************************************/
+@@ -397,7 +386,6 @@
+ /* using drv_generic_text_draw(W) */
+ /* using drv_generic_text_icon_draw(W) */
+ /* using drv_generic_text_bar_draw(W) */
+-/* using drv_generic_gpio_draw(W) */
+ 
+ 
+ /****************************************/
+@@ -406,7 +394,7 @@
+ 
+ 
+ /* list models */
+-int drv_Sample_list(void)
++int drv_pL_list(void)
+ {
+     printf("generic");
+     return 0;
+@@ -414,8 +402,7 @@
+ 
+ 
+ /* initialize driver & display */
+-/* use this function for a text display */
+-int drv_Sample_init(const char *section, const int quiet)
++int drv_pL_init(const char *section, const int quiet)
+ {
+     WIDGET_CLASS wc;
+     int ret;
+@@ -427,29 +414,19 @@
+     YRES = 8;			/* pixel height of one char  */
+     CHARS = 8;			/* number of user-defineable characters */
+     CHAR0 = 0;			/* ASCII of first user-defineable char */
++    GPOS = 8;
++    INVALIDATE = 1;
+     GOTO_COST = 2;		/* number of bytes a goto command requires */
+ 
+     /* real worker functions */
+-    drv_generic_text_real_write = drv_Sample_write;
+-    drv_generic_text_real_defchar = drv_Sample_defchar;
++    drv_generic_text_real_write = drv_pL_write;
++    drv_generic_text_real_defchar = drv_pL_defchar;
++    drv_generic_gpio_real_set = drv_pL_gpo;
+ 
+-    /* remove unless you have GPO's */
+-    drv_generic_gpio_real_set = drv_Sample_GPO;
+-
+-
+     /* start display */
+-    if ((ret = drv_Sample_start(section)) != 0)
++    if ((ret = drv_pL_start(section, quiet)) != 0)
+ 	return ret;
+ 
+-    if (!quiet) {
+-	char buffer[40];
+-	qprintf(buffer, sizeof(buffer), "%s %dx%d", Name, DCOLS, DROWS);
+-	if (drv_generic_text_greet(buffer, "www.bwct.de")) {
+-	    sleep(3);
+-	    drv_Sample_clear();
+-	}
+-    }
+-
+     /* initialize generic text driver */
+     if ((ret = drv_generic_text_init(section, Name)) != 0)
+ 	return ret;
+@@ -462,12 +439,9 @@
+     if ((ret = drv_generic_text_bar_init(0)) != 0)
+ 	return ret;
+ 
+-    /* add fixed chars to the bar driver */
+-    drv_generic_text_bar_add_segment(0, 0, 255, 32);	/* ASCII  32 = blank */
++    drv_generic_text_bar_add_segment(0, 0, 255, 32);
+ 
+-
+-    /* initialize generic GPIO driver */
+-    /* remove unless you have GPO's */
++    /* GPO's init */
+     if ((ret = drv_generic_gpio_init(section, Name)) != 0)
+ 	return ret;
+ 
+@@ -487,115 +461,52 @@
+     widget_register(&wc);
+ 
+     /* register plugins */
+-    AddFunction("LCD::contrast", 1, plugin_contrast);
++    AddFunction("LCD::contrast", -1, plugin_contrast);
++    AddFunction("LCD::backlight", -1, plugin_backlight);
++    AddFunction("LCD::gpo", -1, plugin_gpo);
+ 
+     return 0;
+ }
+ 
+ 
+-/* initialize driver & display */
+-/* use this function for a graphic display */
+-int drv_Sample_init2(const char *section, const int quiet)
+-{
+-    int ret;
+-
+-    /* real worker functions */
+-    drv_generic_graphic_real_blit = drv_Sample_blit;
+-
+-    /* remove unless you have GPO's */
+-    drv_generic_gpio_real_set = drv_Sample_GPO;
+-
+-    /* start display */
+-    if ((ret = drv_Sample_start2(section)) != 0)
+-	return ret;
+-
+-    /* initialize generic graphic driver */
+-    if ((ret = drv_generic_graphic_init(section, Name)) != 0)
+-	return ret;
+-
+-    if (!quiet) {
+-	char buffer[40];
+-	qprintf(buffer, sizeof(buffer), "%s %dx%d", Name, DCOLS, DROWS);
+-	if (drv_generic_graphic_greet(buffer, NULL)) {
+-	    sleep(3);
+-	    drv_generic_graphic_clear();
+-	}
+-    }
+-
+-    /* register plugins */
+-    AddFunction("LCD::contrast", 1, plugin_contrast);
+-
+-    return 0;
+-}
+-
+-
+-
+ /* close driver & display */
+-/* use this function for a text display */
+-int drv_Sample_quit(const int quiet)
++int drv_pL_quit(const int quiet)
+ {
+ 
+     info("%s: shutting down.", Name);
+ 
++    /* flush buffer */
++    drv_pL_send();
++
+     drv_generic_text_quit();
+ 
+-    /* remove unless you have GPO's */
+-    drv_generic_gpio_quit();
+-
+     /* clear display */
+-    drv_Sample_clear();
++    drv_pL_clear();
+ 
+     /* say goodbye... */
+     if (!quiet) {
+ 	drv_generic_text_greet("goodbye!", NULL);
+     }
+ 
+-    debug("closing connection");
+-    drv_Sample_close();
++    if (use_libusb) {
++#ifdef HAVE_USB_H
++	drv_pL_close();
++#endif
++    }
+ 
+-    return (0);
+-}
+-
+-/* close driver & display */
+-/* use this function for a graphic display */
+-int drv_Sample_quit2(const int quiet)
+-{
+-
+-    info("%s: shutting down.", Name);
+-
+-    /* clear display */
+-    drv_generic_graphic_clear();
+-
+-    /* remove unless you have GPO's */
+-    drv_generic_gpio_quit();
+-
+-    /* say goodbye... */
+-    if (!quiet) {
+-	drv_generic_graphic_greet("goodbye!", NULL);
++    if (Buffer) {
++	free(Buffer);
++	Buffer = NULL;
++	BufPtr = Buffer;
+     }
+ 
+-    drv_generic_graphic_quit();
+-
+-    debug("closing connection");
+-    drv_Sample_close();
+-
+     return (0);
+ }
+ 
+ 
+-/* use this one for a text display */
+-DRIVER drv_Sample = {
++DRIVER drv_picoLCD = {
+   name:Name,
+-  list:drv_Sample_list,
+-  init:drv_Sample_init,
+-  quit:drv_Sample_quit,
++  list:drv_pL_list,
++  init:drv_pL_init,
++  quit:drv_pL_quit,
+ };
+-
+-
+-/* use this one for a graphic display */
+-DRIVER drv_Sample2 = {
+-  name:Name,
+-  list:drv_Sample_list,
+-  init:drv_Sample_init2,
+-  quit:drv_Sample_quit2,
+-};
+Index: Makefile.am
+===================================================================
+--- Makefile.am	(revision 746)
++++ Makefile.am	(working copy)
+@@ -83,6 +83,7 @@
+ drv_MilfordInstruments.c      \
+ drv_Noritake.c                \
+ drv_NULL.c                    \
++drv_picoLCD.c		      \
+ drv_RouterBoard.c             \
+ drv_Sample.c                  \
+ drv_serdisplib.c              \
+Index: lcd4linux.conf.sample
+===================================================================
+--- lcd4linux.conf.sample	(revision 746)
++++ lcd4linux.conf.sample	(working copy)
+@@ -246,6 +246,14 @@
+     }
+ }
+ 
++Display picoLCD {
++    Driver 'picoLCD'
++    Size     '20x2'
++    Contrast  0
++    Backlight 1
++    Icons     4
++}
++
+ Display SC1602D {
+     Driver 'HD44780'
+     Port '/dev/parports/0'	
+Index: drv.c
+===================================================================
+--- drv.c	(revision 746)
++++ drv.c	(working copy)
+@@ -66,6 +66,7 @@
+ extern DRIVER drv_MilfordInstruments;
+ extern DRIVER drv_Noritake;
+ extern DRIVER drv_NULL;
++extern DRIVER drv_picoLCD;
+ extern DRIVER drv_RouterBoard;
+ extern DRIVER drv_Sample;
+ extern DRIVER drv_serdisplib;
+@@ -141,6 +142,10 @@
+ #ifdef WITH_NULL
+     &drv_NULL,
+ #endif
++#ifdef WITH_picoLCD
++    &drv_picoLCD,
++#endif
++
+ #ifdef WITH_ROUTERBOARD
+     &drv_RouterBoard,
+ #endif

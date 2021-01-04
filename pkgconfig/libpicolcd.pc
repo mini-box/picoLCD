@@ -1,0 +1,10 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libpicolcd
+Description: library to access iTuner USB LCDs series
+Version: 0.1.10
+Libs: @LIBUSB_LIBS@ @LIBHID_LIBS@ -L${libdir}
+Cflags: @LIBUSB_CFLAGS@ @LIBHID_CFLAGS@ -I${includedir}

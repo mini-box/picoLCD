@@ -1,0 +1,52 @@
+ChangeLog:
+2010-03-12 Nicu Pavel (npavel@ituner.com)
+    - 0.1.9 - release 
+	- added support for picolcd 20x4 and 256x64 products
+	- link with libusb-legacy on MacOS
+	- use glibtoolize for MacOS
+	- remove all calls to self->hid->interrupt_write with picolcd_send
+	- silence all warnings
+	- reduce the verbosity while compiling
+	- added a _hid_unimplemented and _picolcd_unimplemented to tag 
+	  the functions not implemented in usblcd operations struct
+	- renamed driver vars 
+	- make drivers filename nicer
+	- fallback with return instead of exit
+	- added support for 20x4 settext function
+	- added a new function picolcd_send to easier send data to lcd
+	- some spelling mistakes fixed
+	- added picolcd-common.h
+	- updated and fixed examples
+	- changed header files from usblcd to picolcd
+	- renamed main binary to picolcd
+	- build system cleanup
+	- move to picoLCD/libpicoLCD
+	- code cleanups
+2009-05-31 Nicu Pavel (npavel@ituner.com)
+    - 0.1.8 - maintenance release 
+	- fix some problems with library being renamed to libpicoLCD
+	- fixed some Makefile warnings
+	- TODO list
+2008-08-22 Nicu Pavel (npavel@ituner.com)
+    - 0.1.7 - release
+    - added IR decoding library for RC5/RC6 remotes
+    - added IR decoding example in main.c
+2007-08-02 Nicu Pavel (npavel@ituner.com) 
+    - 0.1.5 - unreleased 
+    - renamed project to libpicoLCD 
+    - added a widget library 
+2006-12-07  Nicu Pavel (npavel@ituner.com)
+    -0.1.4 - release
+	- removed libhid dependency
+	- added histogram, vumeter widgets
+2006-06-26  Nicu Pavel (npavel@ituner.com)
+    - 0.1.2 - release
+	- added support for v3 splash screen (firmware 1.57)
+	- added support for v2 splash screen (firmware 1.55)
+	- added setfont support
+	- added basic xpm2fnt to tools folder
+	- added more fonts examples converted from xpm files
+	
+2006-05-31  Nicu Pavel (npavel@ituner.com)
+    - 0.1.0 - initial release 
+

@@ -1,0 +1,132 @@
+From bonbons@linux-vserver.org Tue Mar 30 23:41:59 2010
+Received: from mail-bw0-f217.google.com (mail-bw0-f217.google.com
+ [209.85.218.217]) by link.radiohit.ro (8.14.2/8.14.2/Debian-2build1) with
+ ESMTP id o2UKfvpq029907 for <panic@radiohit.ro>; Tue, 30 Mar 2010 23:41:59
+ +0300
+Received: by bwz9 with SMTP id 9so1415910bwz.9 for <panic@radiohit.ro>;
+ Tue, 30 Mar 2010 13:46:30 -0700 (PDT)
+Received: by 10.204.32.214 with SMTP id e22mr6781146bkd.5.1269981990719;
+ Tue, 30 Mar 2010 13:46:30 -0700 (PDT)
+X-Forwarded-To: panic@radiohit.ro
+X-Forwarded-For: npavel@mini-box.com panic@radiohit.ro
+Delivered-To: npavel@ituner.com
+Received: by 10.204.48.40 with SMTP id p40cs249622bkf; Tue, 30 Mar 2010
+ 13:46:30 -0700 (PDT)
+Received: by 10.101.4.27 with SMTP id g27mr5412221ani.221.1269981987889;
+ Tue, 30 Mar 2010 13:46:27 -0700 (PDT)
+Received: from legolas.restena.lu (legolas.restena.lu [158.64.1.34]) by
+ mx.google.com with ESMTP id 4si756116ywh.39.2010.03.30.13.46.26; Tue, 30
+ Mar 2010 13:46:27 -0700 (PDT)
+Received-SPF: neutral (google.com: 158.64.1.34 is neither permitted nor
+ denied by domain of bonbons@linux-vserver.org) client-ip=158.64.1.34;
+Authentication-Results: mx.google.com; spf=neutral (google.com: 158.64.1.34
+ is neither permitted nor denied by domain of bonbons@linux-vserver.org)
+ smtp.mail=bonbons@linux-vserver.org
+Received: from legolas.restena.lu (localhost [127.0.0.1]) by
+ legolas.restena.lu (Postfix) with ESMTP id 84ABCA98CD; Tue, 30 Mar 2010
+ 22:46:26 +0200 (CEST)
+Received: from neptune.home (unknown [158.64.15.115]) by legolas.restena.lu
+ (Postfix) with ESMTP id 352D8AF4D9; Tue, 30 Mar 2010 22:46:26 +0200 (CEST)
+Date: Tue, 30 Mar 2010 22:43:28 +0200
+From: Bruno =?UTF-8?B?UHLDqW1vbnQ=?= <bonbons@linux-vserver.org>
+To: Jiri Kosina <jkosina@suse.cz>
+Cc: Dmitry Torokhov <dmitry.torokhov@gmail.com>, linux-input@vger.kernel.org, linux-usb@vger.kernel.org, linux-fbdev@vger.kernel.org, linux-kernel@vger.kernel.org, "Rick L. Vinyard Jr." <rvinyard@cs.nmsu.edu>, Nicu Pavel <npavel@ituner.com>, Oliver Neukum <oliver@neukum.org>, Jaya Kumar <jayakumar.lkml@gmail.com>
+Subject: [PATCH v6 8/8] hid: add PM support to PicoLCD device
+Message-ID: <20100330224328.685f74ef@neptune.home>
+In-Reply-To: <20100330223224.18fe4f3e@neptune.home>
+References: <20100324233707.7243b04d@neptune.home>
+	 <20100324234022.0361bd80@neptune.home>
+	 <20100326065656.GC26602@core.coreip.homeip.net>
+	 <20100326102951.3b9ecda1@neptune.home>
+	 <alpine.LNX.2.00.1003262156280.24576@pobox.suse.cz>
+	 <20100327012245.0ace6a09@neptune.home>
+	 <alpine.LNX.2.00.1003291144350.24576@pobox.suse.cz>
+	 <20100329121611.0c22dcaf@pluto.restena.lu>
+	 <alpine.LNX.2.00.1003301010410.24576@pobox.suse.cz>
+	 <20100330223224.18fe4f3e@neptune.home>
+X-Mailer: Claws Mail 3.7.5 (GTK+ 2.18.6; i686-pc-linux-gnu)
+Mime-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+X-Virus-Scanned: ClamAV
+X-Radio-HIT-MailScanner-Information: Please contact the ISP for more
+ information
+X-Radio-HIT-MailScanner-ID: o2UKfvpq029907
+X-Radio-HIT-MailScanner: Found to be clean
+X-Radio-HIT-MailScanner-From: npavel+caf_=panic=radiohit.ro@mini-box.com
+X-Spam-Status: No
+X-Evolution-Source: imap://panic@server.radiohit.ro/
+Content-Transfer-Encoding: 8bit
+
+Add PM support in order to turn off backlight on suspend, restore
+it on resume and especially restore complete state on reset-resume.
+
+Signed-off-by: Bruno Prémont <bonbons@linux-vserver.org>
+---
+ drivers/hid/hid-picolcd.c |   42 ++++++++++++++++++++++++++++++++++++++++++
+ 1 files changed, 42 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/hid/hid-picolcd.c b/drivers/hid/hid-picolcd.c
+index fe1f772..daa7c5d 100644
+--- a/drivers/hid/hid-picolcd.c
++++ b/drivers/hid/hid-picolcd.c
+@@ -2255,6 +2255,43 @@ static int picolcd_raw_event(struct hid_device *hdev,
+ 	return 1;
+ }
+ 
++#ifdef CONFIG_PM
++static int picolcd_suspend(struct hid_device *hdev)
++{
++	picolcd_suspend_backlight(hid_get_drvdata(hdev));
++	dbg_hid(PICOLCD_NAME " device ready for suspend\n");
++	return 0;
++}
++
++static int picolcd_resume(struct hid_device *hdev)
++{
++	int ret;
++	ret = picolcd_resume_backlight(hid_get_drvdata(hdev));
++	if (ret)
++		dbg_hid(PICOLCD_NAME " restoring backlight failed: %d\n", ret);
++	return 0;
++}
++
++static int picolcd_reset_resume(struct hid_device *hdev)
++{
++	int ret;
++	ret = picolcd_reset(hdev);
++	if (ret)
++		dbg_hid(PICOLCD_NAME " resetting our device failed: %d\n", ret);
++	ret = picolcd_fb_reset(hid_get_drvdata(hdev), 0);
++	if (ret)
++		dbg_hid(PICOLCD_NAME " restoring framebuffer content failed: %d\n", ret);
++	ret = picolcd_resume_lcd(hid_get_drvdata(hdev));
++	if (ret)
++		dbg_hid(PICOLCD_NAME " restoring lcd failed: %d\n", ret);
++	ret = picolcd_resume_backlight(hid_get_drvdata(hdev));
++	if (ret)
++		dbg_hid(PICOLCD_NAME " restoring backlight failed: %d\n", ret);
++	picolcd_leds_set(hid_get_drvdata(hdev));
++	return 0;
++}
++#endif
++
+ /* initialize keypad input device */
+ static int picolcd_init_keys(struct picolcd_data *data,
+ 		struct hid_report *report)
+@@ -2530,6 +2567,11 @@ static struct hid_driver picolcd_driver = {
+ 	.probe =         picolcd_probe,
+ 	.remove =        picolcd_remove,
+ 	.raw_event =     picolcd_raw_event,
++#ifdef CONFIG_PM
++	.suspend =       picolcd_suspend,
++	.resume =        picolcd_resume,
++	.reset_resume =  picolcd_reset_resume,
++#endif
+ };
+ 
+ static int __init picolcd_init(void)
+-- 
+1.6.4.4
+
+
+

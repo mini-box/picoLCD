@@ -1,0 +1,63 @@
+#! /bin/sh
+#
+# LCDd	initscript for LCDd
+# by Jose Luis Tallon <jltallon@adv-solutions.net>
+#
+### BEGIN INIT INFO
+# Provides:          lcdd
+# Required-Start:    $syslog
+# Required-Stop:     $syslog
+# Should-Start:      $local_fs
+# Should-Stop:       $local_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: LCD daemon
+# Description:       Control LCD displays connected to the computer
+### END INIT INFO
+#
+#	Written by Miquel van Smoorenburg <miquels@cistron.nl>.
+#	Modified for Debian 
+#	by Ian Murdock <imurdock@gnu.ai.mit.edu>.
+#	Modified for lcdproc by Jonathan Oxer <jon@debian.org>
+#
+#
+
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+DAEMON=/usr/sbin/LCDd
+NAME="LCDd"
+DESC="LCDd"
+DAEMON_OPTS="-s true -f -c /etc/LCDd.conf"
+
+test -x $DAEMON || exit 0
+
+set -e
+
+case "$1" in
+  start)
+	echo -n "Starting $DESC: "
+	start-stop-daemon --start --quiet --background \
+		--exec $DAEMON -- $DAEMON_OPTS
+	echo "$NAME."
+	;;
+  stop)
+	echo -n "Stopping $DESC: "
+	start-stop-daemon --stop --oknodo --quiet \
+		--exec $DAEMON
+	echo "$NAME."
+	;;
+  restart|force-reload)
+	echo -n "Restarting $DESC: "
+	$0 stop
+	sleep 1
+	$0 start
+	;;
+  *)
+	N=/etc/init.d/$NAME
+	# echo "Usage: $N {start|stop|restart|reload|force-reload}" >&2
+	echo "Usage: $N {start|stop|restart|force-reload}" >&2
+	exit 1
+	;;
+esac
+
+exit 0

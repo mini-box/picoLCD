@@ -1,0 +1,56 @@
+AC_PREREQ(2.59)
+AC_INIT(picolcd, 0.1.10, npavel@ituner.com)
+AC_CONFIG_SRCDIR([lib/hid.c])
+AC_CONFIG_HEADER([config.h])
+
+AM_INIT_AUTOMAKE
+AM_SILENT_RULES([yes])
+
+AC_PROG_LIBTOOL
+AC_PROG_INSTALL
+AC_PROG_MAKE_SET
+
+dnl AC_CANONICAL_HOST
+
+# Checks for programs.
+AC_PROG_CC
+
+# Checks for libraries.
+#case $host_os in
+#    *darwin*) PKG_CHECK_MODULES([USB], [libusb-legacy]);;
+#    *) PKG_CHECK_MODULES([USB], [libusb]);;
+#esac
+
+PKG_CHECK_MODULES([USB], [libusb])
+
+# Checks the OS
+case ${host_os} in
+    *darwin*) host_os=macosx;;
+    *linux* ) host_os=linux;;
+esac
+
+AM_CONDITIONAL([OS_LINUX], [test x$host_os = xlinux])
+AM_CONDITIONAL([OS_MACOSX], [test x$host_os = xmacosx])
+
+#AC_SUBST(USB_CFLAGS)
+AC_SUBST(USB_LIBS)
+            
+#AC_CHECK_LIB($LIB, usb_init)
+
+# Checks for header files.
+AC_HEADER_STDC
+AC_CHECK_HEADERS([string.h])
+
+# Checks for typedefs, structures, and compiler characteristics.
+AC_HEADER_STDBOOL
+
+# Checks for library functions.
+AC_FUNC_MALLOC
+
+CFLAGS="-I../include"
+
+AC_SUBST(CFLAGS)
+AC_SUBST(USB_CFLAGS)
+
+AC_CONFIG_FILES([Makefile pkgconfig/libpicolcd.pc lib/Makefile src/Makefile])
+AC_OUTPUT

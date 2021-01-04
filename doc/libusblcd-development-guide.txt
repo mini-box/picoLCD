@@ -1,0 +1,230 @@
+
+ libusblcd SDK developer guide
+ ==============================
+ 
+ 
+     Usblcd and libusblcd are (c) 2006 iTuner Networks and Mini-Box.Com
+     and distributed under the terms of the GNU General Public License.
+     See the file ./COPYING in the source distribution for more information.
+	     
+    Please send bug reports to <support@mini-box.com>
+    
+    
+Introduction
+-------------
+
+    Libusblcd implements the basic communication with the USB LCD device.
+    It relies on libusb for raw usb data and libhid as a framework for 
+hid devices. Future version might remove libhid dependency.
+
+Requirements
+------------
+    Libusblcd doesn't require any kernel drivers except basic USB drivers
+    and can run on both 2.4.x and 2.6.x kernel versions.
+    
+    It relies on libusb (http://libusb.sourceforge.net) and libhid
+    (libhid.alioth.debian.org).
+    
+    Also usbfs filesystem must be mounted (by default on all linux distributions).
+    You can mount usbfs by executing the command:
+     mount -t usbfs usbfs /proc/bus/usb
+    
+    To verify if usb is working corectly on your distribution execute:
+	lsusb or lsusb -v
+    which should list the usb devices that are connected to your computer 
+    like in the exemple below
+    
+    Bus 003 Device 001: ID 0000:0000
+    Bus 002 Device 003: ID 04d8:0002 Microchip Technology, Inc.
+    Bus 002 Device 002: ID 046d:c01e Logitech, Inc.
+    Bus 002 Device 001: ID 0000:0000
+    Bus 001 Device 001: ID 0000:0000
+
+
+Using libusblcd
+---------------
+
+    A minimal program that inits the usb lcd and sets the backlight
+on looks like this:
+
+#include <usblcd.h>
+
+int main(void)
+{
+    usblcd_operation *mylcd;
+    /* init hid device and usblcd_operations structure */
+    mylcd = new_usblcd_operations();
+    /* init the USB LCD */
+    mylcd->init(mylcd);
+    /* sets backlight to on */
+    mylcd->backlight(mylcd,1);
+    /* close the USB LCD device */
+    mylcd->close(mylcd);
+    
+    return 0;
+}
+
+    mylcd is a pointer of usblcd_operation type. This structure 
+contains all the functions needed to work with the USB LCD 
+device. The structure must be initialised by using:
+
+    mylcd = new_usblcd_operations();
+
+After this all operation are accessible by:
+    mylcd->function(mylcd, params....)
+
+Initialising usblcd_operations also initialise the hid communication with 
+the device.
+        
+usblcd_operations structure also contains the function and variables
+that directly work with HID devices. These can be accessed by using
+    mylcd->hid->hid_interrupt_read(mylcd, params...)
+
+Basic usb lcd functions
+=======================
+    mylcd->match(char *string)
+    
+    This function can alter the default detection of LCD device 
+    by providing a different matching string.
+    
+    mylcd->init(usblcd_operations *self)
+    
+    This function will send the functional parameters to USB LCD.
+    Note that HID initialisation and USB LCD communication is already
+    opened when usblcd_operation struct was initialised by using:
+	mylcd = new_usblcd_operations();
+    
+mylcd->debug(int level)
+-------------------------    
+    This allow to set the debug level of messages visible on console.
+    
+mylcd->setled(usblcd_operations *self, unsigned int led, unsigned int status);
+--------------------------------------------------------------------------        
+
+    This function will open/close the specified led.
+    
+mylcd->backlight(usblcd_operations *self, unsigned int status)
+---------------------------------------------------------------    
+    Sets backlight on or off.
+    
+mylcd->contrast(usblcd_operations *self, unsigned int level);
+--------------------------------------------------------------    
+    Sets contrast of the lcd screen with values between 0 and 40.
+    
+mylcd->set_cursor(usblcd_operations *self, unsigned int status);
+----------------------------------------------------------------    
+    Shows or hides the cursor.
+    
+
+mylcd->set_cursor_blink(usblcd_operations *self, unsigned int status);
+-----------------------------------------------------------------------    
+    Sets or unsets cursor blink status.
+    
+mylcd->set_switch(usblcd_operations *self, unsigned int status);
+----------------------------------------------------------------    
+    Allows LCD screen to be switched off or on.
+    
+mylcd->read_events(usblcd_operations *self);
+--------------------------------------------    
+    This function will read any event available and output it 
+    on stderr.
+
+mylcd->enter_flasher_mode(usblcd_operations *self);
+---------------------------------------------------    
+    Puts the device in flasher mode of operation.
+    
+mylcd->exit_flasher_mode(usblcd_operations *self);
+---------------------------------------------------    
+    Returns the device to keyboard mode of operation.
+    
+mylcd->clear(usblcd_operations *self);
+---------------------------------------    
+    Clears the lcd screen.
+    
+mylcd->settext(usblcd_operations *self, unsigned int row, unsigned int column, char *text);
+-------------------------------------------------------------------------------------------
+    Writes the specified text to LCD screen on specified row and column.
+    
+mylcd->setfont(usblcd_operations *self, char *filename);
+--------------------------------------------------------    
+    Write the characters defined in filename to CG-RAM
+    of the LCD device.
+    
+    
+mylcd->setsplash(usblcd_operations *self, char *filename);
+----------------------------------------------------------    
+
+    Write the splash screen data from filename into the LCD device 
+    EEPROM. See usblcd documentation for splash file format.
+    
+    
+mylcd->flash(usblcd_operations *self, char *filename);
+------------------------------------------------------    
+    Write the firmware from filename into LCD EEPROM.
+
+mylcd->getversion(usblcd_operations *self);
+-------------------------------------------    
+    This function should return USB LCD version and it's
+    also used to clear the message queue of LCD device.
+    
+mylcd->close(usblcd_operations *self);
+--------------------------------------    
+    Shutsdown USB LCD and HID communication and frees 
+    the memory occupied.
+
+
+mylcd->powerstate(usblcd_operations *self);
+-------------------------------------------    
+    Get the power button status from LCD device.
+    Not implemented yet.
+    
+mylcd->keystate(usblcd_operations *self);
+-----------------------------------------    
+    Returns the last keypresses.
+    Not implemeted yet use read_events function.
+    
+mylcd->irdata(usblcd_operations *self);
+---------------------------------------    
+    Returns the last IR data received.
+    Not implemented yet use read_events function.
+
+
+Basic HID functions
+===================
+
+    These functions are presented here as a reference. They shouldn't be called
+directly since all operations are made thru usblcd functions presented above.
+    As usblcd functions hid functions are initialised by calling new_hid_operations
+and the structure holding them is hid_operations.
+
+mylcd->hid->hid_id
+    hid_id is the device id returned by calling hid->init. hid_id is allocated
+    when new_usblcd_operations or new_hid_operations are called.
+
+mylcd->hid->debug(int level);
+
+    Sets the level of HID messages on console.
+    
+mylcd->hid->init(HIDInterface **hid_id);
+
+    Initialises the HID communication with the lcd device. 
+    This is already done when calling new_usb_operations.
+
+mylcd->hid->interrupt_read(void *hid_id, hid_params *params);
+    Attempts to execute a interrupt read from the device specified 
+    by hid_id.
+    
+mylcd->hid->interrupt_write(void *hid_id, hid_params *params);
+    Attempts to execute a interrupt write to the device specified
+    by hid_id.
+    
+mylcd->hid->close(void *hid_id);
+    Closes the HID communications and frees the data structures used.
+    
+    
+
+For more examples see the source of libusblcd and usblcd application.
+
+
+
+		 

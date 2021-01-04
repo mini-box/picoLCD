@@ -1,0 +1,158 @@
+From bonbons@linux-vserver.org Tue Mar 30 23:42:54 2010
+Received: from mail-bw0-f217.google.com (mail-bw0-f217.google.com
+ [209.85.218.217]) by link.radiohit.ro (8.14.2/8.14.2/Debian-2build1) with
+ ESMTP id o2UKgrYJ029967 for <panic@radiohit.ro>; Tue, 30 Mar 2010 23:42:54
+ +0300
+Received: by bwz9 with SMTP id 9so1416549bwz.9 for <panic@radiohit.ro>;
+ Tue, 30 Mar 2010 13:47:26 -0700 (PDT)
+Received: by 10.204.152.17 with SMTP id e17mr777804bkw.105.1269981990480;
+ Tue, 30 Mar 2010 13:46:30 -0700 (PDT)
+X-Forwarded-To: panic@radiohit.ro
+X-Forwarded-For: npavel@mini-box.com panic@radiohit.ro
+Delivered-To: npavel@ituner.com
+Received: by 10.204.48.40 with SMTP id p40cs249621bkf; Tue, 30 Mar 2010
+ 13:46:30 -0700 (PDT)
+Received: by 10.101.210.31 with SMTP id m31mr1997934anq.179.1269981987825;
+ Tue, 30 Mar 2010 13:46:27 -0700 (PDT)
+Received: from legolas.restena.lu (legolas.restena.lu [158.64.1.34]) by
+ mx.google.com with ESMTP id 4si761784ywh.5.2010.03.30.13.46.26; Tue, 30 Mar
+ 2010 13:46:27 -0700 (PDT)
+Received-SPF: neutral (google.com: 158.64.1.34 is neither permitted nor
+ denied by domain of bonbons@linux-vserver.org) client-ip=158.64.1.34;
+Authentication-Results: mx.google.com; spf=neutral (google.com: 158.64.1.34
+ is neither permitted nor denied by domain of bonbons@linux-vserver.org)
+ smtp.mail=bonbons@linux-vserver.org
+Received: from legolas.restena.lu (localhost [127.0.0.1]) by
+ legolas.restena.lu (Postfix) with ESMTP id B882CA98CE; Tue, 30 Mar 2010
+ 22:46:25 +0200 (CEST)
+Received: from neptune.home (unknown [158.64.15.115]) by legolas.restena.lu
+ (Postfix) with ESMTP id 657C6AF4D9; Tue, 30 Mar 2010 22:46:25 +0200 (CEST)
+Date: Tue, 30 Mar 2010 22:42:30 +0200
+From: Bruno =?UTF-8?B?UHLDqW1vbnQ=?= <bonbons@linux-vserver.org>
+To: Jiri Kosina <jkosina@suse.cz>
+Cc: Dmitry Torokhov <dmitry.torokhov@gmail.com>, linux-input@vger.kernel.org, linux-usb@vger.kernel.org, linux-fbdev@vger.kernel.org, linux-kernel@vger.kernel.org, "Rick L. Vinyard Jr." <rvinyard@cs.nmsu.edu>, Nicu Pavel <npavel@ituner.com>, Oliver Neukum <oliver@neukum.org>, Jaya Kumar <jayakumar.lkml@gmail.com>
+Subject: [PATCH v6 7/8, needs improvement] hid: add suspend/resume hooks
+ for hid drivers
+Message-ID: <20100330224230.7b84df75@neptune.home>
+In-Reply-To: <20100330223224.18fe4f3e@neptune.home>
+References: <20100324233707.7243b04d@neptune.home>
+	 <20100324234022.0361bd80@neptune.home>
+	 <20100326065656.GC26602@core.coreip.homeip.net>
+	 <20100326102951.3b9ecda1@neptune.home>
+	 <alpine.LNX.2.00.1003262156280.24576@pobox.suse.cz>
+	 <20100327012245.0ace6a09@neptune.home>
+	 <alpine.LNX.2.00.1003291144350.24576@pobox.suse.cz>
+	 <20100329121611.0c22dcaf@pluto.restena.lu>
+	 <alpine.LNX.2.00.1003301010410.24576@pobox.suse.cz>
+	 <20100330223224.18fe4f3e@neptune.home>
+X-Mailer: Claws Mail 3.7.5 (GTK+ 2.18.6; i686-pc-linux-gnu)
+Mime-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+X-Virus-Scanned: ClamAV
+X-Radio-HIT-MailScanner-Information: Please contact the ISP for more
+ information
+X-Radio-HIT-MailScanner-ID: o2UKgrYJ029967
+X-Radio-HIT-MailScanner: Found to be clean
+X-Radio-HIT-MailScanner-From: npavel+caf_=panic=radiohit.ro@mini-box.com
+X-Spam-Status: No
+X-Evolution-Source: imap://panic@server.radiohit.ro/
+Content-Transfer-Encoding: 8bit
+
+Add suspend/resume hooks for HID drivers so these can do some
+additional state adjustment when device gets suspended/resumed.
+
+This patch calls these hooks from usbhid suspend/resume functions,
+only calling suspend on plain suspend, not autosuspend.
+(it might be worth adding an autosuspend parameter to suspend
+hook and calling suspend in both cases)
+
+Signed-off-by: Bruno Prémont <bonbons@linux-vserver.org>
+---
+
+Note:
+  this patch needs improvements as mentionned by Olivier Neukum:
+  - suspend hook for both system suspend and autosuspend
+  - no call of hook on USB-HID-resume failure
+
+
+ drivers/hid/usbhid/hid-core.c |   19 ++++++++++++++++++-
+ include/linux/hid.h           |    8 ++++++++
+ 2 files changed, 26 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/hid/usbhid/hid-core.c b/drivers/hid/usbhid/hid-core.c
+index 3e7909b..9acf573 100644
+--- a/drivers/hid/usbhid/hid-core.c
++++ b/drivers/hid/usbhid/hid-core.c
+@@ -1298,6 +1298,11 @@ static int hid_suspend(struct usb_interface *intf, pm_message_t message)
+ 		}
+ 
+ 	} else {
++		if (hid->driver && hid->driver->suspend) {
++			status = hid->driver->suspend(hid);
++			if (status < 0)
++				return status;
++		}
+ 		spin_lock_irq(&usbhid->lock);
+ 		set_bit(HID_REPORTED_IDLE, &usbhid->iofl);
+ 		spin_unlock_irq(&usbhid->lock);
+@@ -1352,6 +1357,11 @@ static int hid_resume(struct usb_interface *intf)
+ 		hid_io_error(hid);
+ 	usbhid_restart_queues(usbhid);
+ 
++	if (hid->driver && hid->driver->resume) {
++		int ret = hid->driver->resume(hid);
++		if (ret < 0 && status == 0)
++			status = ret;
++	}
+ 	dev_dbg(&intf->dev, "resume status %d\n", status);
+ 	return 0;
+ }
+@@ -1360,9 +1370,16 @@ static int hid_reset_resume(struct usb_interface *intf)
+ {
+ 	struct hid_device *hid = usb_get_intfdata(intf);
+ 	struct usbhid_device *usbhid = hid->driver_data;
++	int status;
+ 
+ 	clear_bit(HID_REPORTED_IDLE, &usbhid->iofl);
+-	return hid_post_reset(intf);
++	status = hid_post_reset(intf);
++	if (hid->driver && hid->driver->reset_resume) {
++		int ret = hid->driver->reset_resume(hid);
++		if (ret < 0 && status == 0)
++			status = ret;
++	}
++	return status;
+ }
+ 
+ #endif /* CONFIG_PM */
+diff --git a/include/linux/hid.h b/include/linux/hid.h
+index b1344ec..fcf3e5c 100644
+--- a/include/linux/hid.h
++++ b/include/linux/hid.h
+@@ -589,6 +589,9 @@ struct hid_usage_id {
+  * @report_fixup: called before report descriptor parsing (NULL means nop)
+  * @input_mapping: invoked on input registering before mapping an usage
+  * @input_mapped: invoked on input registering after mapping an usage
++ * @suspend: invoked on suspend (NULL means nop)
++ * @resume: invoked on resume if device was not reset (NULL means nop)
++ * @reset_resume: invoked on resume if device was reset (NULL means nop)
+  *
+  * raw_event and event should return 0 on no action performed, 1 when no
+  * further processing should be done and negative on error
+@@ -629,6 +632,11 @@ struct hid_driver {
+ 	int (*input_mapped)(struct hid_device *hdev,
+ 			struct hid_input *hidinput, struct hid_field *field,
+ 			struct hid_usage *usage, unsigned long **bit, int *max);
++#ifdef CONFIG_PM
++	int (*suspend)(struct hid_device *hdev);
++	int (*resume)(struct hid_device *hdev);
++	int (*reset_resume)(struct hid_device *hdev);
++#endif
+ /* private: */
+ 	struct device_driver driver;
+ };
+-- 
+1.6.4.4
+
+
+
