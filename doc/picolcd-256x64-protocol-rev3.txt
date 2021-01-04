@@ -1,0 +1,293 @@
+PICOLCD 256x64 HID DEVICE MESSAGES
+NOTE: 
+	The values are in hexadecimal (Exp. 0x11)
+	All type of messages have in the first byte the message type. 
+	After the message type is the message content. The meaning entry of the description always deals 
+with the message content (first byte and byte 0 means, first byte from the content).
+
+ERROR MESSAGES (*) (received only as response for OUTPUT messages):
+
+MESSAGE_OK			0x00    // No errors detected in the message body
+ERROR_PARAMETER_MISSING		0x01    // Request does not contain all necessary parameters (request is too short).
+ERROR_DATA_MISSING		0x02	// Request attempts to write more data than was actually sent.
+ERROR_BLOCK_READ_ONLY		0x03	// Request attempts to erase or write a block within the flasher code section.
+ERROR_BLOCK_NOT_ERASABLE	0x04    // Request attempts to erase a block outside of "erasable" memory space.
+ERROR_BLOCK_TOO_BIG 		0x05    // Request attempts to access more data at once than the HID buffer can handle.
+ERROR_SECTION_OVERFLOW		0x06	// Request (address & length) attempts to cross over a section boundary.
+ERROR_INVALID_CMD_LENGHT	0x07	// Command message has invalid lenght (0 or greather then 20 or not correlated with USB report size)
+ERROR_INVALID_DATA_LENGHT	0x08	// Data message has invalid lenght (0 or greather then 59 or not correlated with USB report size)
+
+
+MESSAGE DESCRIPTION
+--------------
+INPUT REPORTS:
+--------------
+
+IN_REPORT_ERROR_CODE			0x10
+	-ERROR MESSAGE
+	-length: 1 byte (INPUT)
+	-meaning:	a) Last error message as defined above
+
+IN_REPORT_KEY_STATE			0x11
+	-key pressed
+	-length: 2 byte (INPUT)
+	-range: 0x00...0x0E
+	-meaning:	a) maximum two keypresses in the same time are accepted
+			b) nothing is pressed: 0x00, 0x00
+			c) one or two keys was pressed: the two values are represnting the two keys
+			d) three or more keys pressed: 0x00, 0x00
+
+IN_REPORT_IR_DATA			0x21
+	-infrared message 
+	-length: 1+maximum 20 byte (INPUT)
+	-meaning:	a) first byte representing the length of the IR message (0x00...0x14)
+			b) IR message is fllowing the length: two bytes are represnting one int 
+
+
+IN_REPORT_INT_EE_DATA			0x32
+	-as response for OUT_REPORT_INT_EE_READ and OUT_REPORT_INT_EE_WRITE (check those message for response description)
+
+
+IN_KEYBD_REPORT_MEMORY  		0x41
+        -as response for OUT_REPORT_READ_MEMORY and OUT_REPORT_WRITE_MEMORY
+		
+
+HID_REPORT_GET_VERSION			0xF1
+	-returns firmware version
+	-length: 2 bytes (INPUT)
+	-meaning:	Firmware version currently installed on picoLCD 
+			byte[0] - minor version, BCD encoded
+			byte[1] - major version, BCD encoded
+			version:   major.minor
+
+HID_REPORT_GET_DEVID			0xF5
+
+	-"Get device ID and Type" report
+	-length: 5 bytes (INPUT)
+	-meaning:	4 byte serial number (not implemented) and 1 byte device type (not implemented)
+			Reserved for future development
+
+HID_REPORT_GET_STX_SIZE			0xF6
+	-returns maximum splash size
+	-length: 4 bytes
+	-meaning:	a) Should return maximul splash size in bytes (not used)
+			2 bytes max splash size, 2 bytes used splash size
+			The returned buffer is in big-endian format !
+
+HID_REPORT_HOOK_GET_VERSION		0xF7
+	-returns firmware version (hook device endpoint)
+	-length: 2 bytes
+	-meaning: Firmware version currently installed on picoLCD. Response is the same as 0xF1.
+                  Only used on windows version of the driver
+
+
+---------------
+OUTPUT REPORTS:
+---------------
+
+OUT_REPORT_LED_STATE			0x81
+	-setting the status of the LED's
+	-length: 1 byte (OUTPUT)
+	-range: 0x00...0xFF
+	-meaning:	a) bit set to "1" switches the LED to ON
+			b) bit set to "0" switches the LED to OFF
+			(every bit is representing one LED)
+			All pins are output only.
+
+OUT_REPORT_LCD_BACKLIGHT		0x91
+	-LCD bakclight on/off
+	-length: 1 byte (OUTPUT)
+	-range: 0x00...0xFF
+	-meaning:	a) 0x00 - Backlight OFF
+			b) 0x01...0xFF - Backlight ON
+			The recommended values are either 0x00 or 0xff, since the lcd 
+			doesn't have a voltage booster other values might cause blinking.
+
+OUT_REPORT_LCD_CONTRAST			0x92
+	-LCD contrast
+	-length: 1 byte (OUTPUT)
+	-range: 0x00...0xff
+	-meaning:	a) 0x00 means MAXIMUM contrast/0xff means MINIMUM contrast. The values
+			    that produce an actual results are between 0x99 (maximum contrast) and 0xFF(minimum).
+
+OUT_REPORT_LCD_RESET			0x93
+	-Reset
+	-length: 2 byte (OUTPUT)
+	-range: 0x0000-0xFFFF
+	-meaning: Reset duration in msec
+
+OUT_REPORT_CMD				0x94 
+	-sends a lcd command for updating the display
+	-length: 63 bytes (OUTPUT)
+	-meaning: sends LCD command
+  	    [ID] [I/OMap] [LENGHT] [Exec Time HI] [LO] [COMMAND 0] [Exec Time HI] [LO] [COMMAND 1]...
+	    [I/O Map] - |x|x|x|CSC|CSB|CSA|0|0|
+            [LENGTH] - number of commands following
+            [Exec Time HI] [LO] - delay before executing the following command (msec)
+            [COMMAND N] - the command sent to the LCD
+
+IMPORTANT: for messages 0x94, 0x95, 0x96 commands and data structure can be read at:
+http://www.topwaydisplay.com/Pub/Manual/LM6800-Manual-Rev0.1.pdf 
+at Display memory map and Display Control Instructions chapters. 
+
+
+OUT_REPORT_DATA				0x95
+	-sends the actual data for updating the display
+	-length: 63 bytes
+	-meaning: each byte represent 8 pixels (1 pixel on, 0 pixel off)
+	    [ID] [I/O Map]  [Exec Time HI] [LO] [DATA LENGTH] [ACTUAL PIXEL DATA]
+	    0x95  chipsel    0x00           0x00  0x20            ...
+	    [I/O Map] - |x|x|x|CSC|CSB|CSA|0|0|
+            [Exec Time HI] - delay before every byte is sent to the LCD
+            [DATA LENGTH] - byte count
+            [ACTUAL PIXEL DATA] - pixel data (see memory map in the LM6800-Manual-Rev0.1.pdf)
+
+
+OUT_REPORT_CMD_DATA			0x96 
+	-sends a lcd command with data for updating the display
+	-length: 63 bytes (OUTPUT)
+	-meaning:
+	    [ID] [I/OMap] [LENGHT] [Exec Time HI] [LO] [COMMAND 0] [Exec Time HI] [LO] [DATA LENGTH]  [???]  [???]  [ACTUAL PIXEL  DATA]
+	    0x96  chipsel  0x02         0x00      0x00  0xb8 + line   0x00        0x00    0x40	0x00   0x00    ...
+        Mixture of data and command in same message (was introduced for speed optimizations to permit N commands 
+        and data sending in same message). Parameters are the same as for message 0x94 and 0x95.
+
+(eeprom write/read functions can save up to 256bytes to eeprom which is preserved between reboots/disconnects)
+
+OUT_REPORT_INT_EE_READ			0xA3
+	-read internal eprom (eprom size 256 byte)
+	-length: 3 (OUTPUT)
+	-meaning:	a) byte 0: addr & 0xff - ADDRESSLO
+			b) byte 1: (addr >> 8) & 0xff - ADDRESSHI
+			c) byte 3: LENGTH of the data what has to be readed(1-20)
+			    The Addresas range is 0x00 0xff no mapping.
+	-response: 
+		- one of the ERROR_MESSAGES (*) if error occured
+		- if everything is ok: response type = IN_REPORT_INT_EE_DATA
+			a) byte 0: addr & 0xff - ADDRESSLO
+			b) byte 1: (addr >> 8) & 0xff - ADDRESSHI
+			c) byte 2: LENGTH of the data what was read(1-20)
+			d) DATA (LENGTH bytes)
+
+
+OUT_REPORT_INT_EE_WRITE			0xA4
+	-write intrenal eprom (eprom size 256 byte)
+	-length: 3+LENGTH (OUTPUT)
+	-meaning:	a) byte 0: addr & 0xff - ADDRESSLO
+			b) byte 1: (addr >> 8) & 0xff - ADDRESSHI
+			c) byte 2: LENGTH of the data what will be written(1-20)
+			d) DATA (LENGTH bytes)
+	-response: 
+		- one of the ERROR_MESSAGES (*) if error occured
+		- if everything is ok: response type = IN_REPORT_INT_EE_DATA
+			- same format as the request: a), b), c), d)
+		NOTE: if the received data does not match the sent one - a memory write error occured!
+
+
+OUT_REPORT_ERASE_MEMORY			0xB2 (LCD mode)	 - response 0x41
+FLASH_REPORT_ERASE_MEMORY	        0xF2 (Bootloader mode) - response 0xF2
+	-erase the memory (anywhere inside the 64 byte-block)
+	-length: 3 (OUTPUT)
+	-meaning:	a) byte 0: addr & 0xff - ADDRESSLO
+			b) byte 1: (addr >> 8) & 0xff - ADDRESSHI
+			c) byte 2: (addr >> 16) & 0xff - ADDRESSUP
+	-response: 
+		- one of the ERROR_MESSAGES (*) if error occured
+		- if everything is ok: response type = OUT_REPORT_ERASE_MEMORY
+			- same format as the request: a), b), c).
+
+OUT_REPORT_READ_MEMORY			0xB3 (LCD mode)	- response 0x41
+FLASH_REPORT_READ_MEMORY	        0xF3 (Bootloader mode) - response 0xF3
+	-read memory (firmware+splash)
+	-length: 4 (OUTPUT)
+	-meaning:	a) byte 0: addr & 0xff - ADDRESSLO
+			b) byte 1: (addr >> 8) & 0xff - ADDRESSHI
+			c) byte 2: (addr >> 16) & 0xff - ADDRESSUP
+			d) byte 3: LENGTH of the data what has to be readed(1-32)
+	-response: 
+		- one of the ERROR_MESSAGES (*) if error occured
+		- if everything is ok: response type = OUT_REPORT_READ_MEMORY
+			a) byte 0: addr & 0xff - ADDRESSLO
+			b) byte 1: (addr >> 8) & 0xff - ADDRESSHI
+			c) byte 2: (addr >> 16) & 0xff - ADDRESSUP
+			d) byte 3: LENGTH of the data what was read(1-32)
+			e) DATA (LENGTH bytes)
+
+			Physical address:
+			- bootloader (flasher code): 0x0000-0x1FFF
+			- firmware: 0x2000-0x5FFF
+			- splash: 0x4200-0x5FFD (the original splash). First 2 bytes are the 
+			- splash length - wrong length might cause LCD freeze
+
+OUT_REPORT_WRITE_MEMORY			0xB4 (LCD mode)	- response 0x41
+FLASH_REPORT_WRITE_MEMORY               0xF4 (Bootloader mode) - response 0xF4
+	-write memory (firmware+splash)
+	-length: 4+LENGTH (OUTPUT)
+	-meaning:	a) byte 0: addr & 0xff - ADDRESSLO
+			b) byte 1: (addr >> 8) & 0xff - ADDRESSHI
+			c) byte 2: (addr >> 16) & 0xff - ADDRESSUP
+			d) byte 3: LENGTH of the data what will be written(1-32)
+			e) DATA (LENGTH bytes)
+	-response:
+		- one of the ERROR_MESSAGES (*) if error occured
+		- if everything is ok: response type = OUT_REPORT_WRITE_MEMORY
+			- same format as the request: a), b), c), d), e).
+		NOTE: if the received data does not match the sent one - a memory write error occured!
+
+
+	  MAPPINGS FOR DIFFERENT MODES:   
+
+	  LCD mode:
+	      OUT_REPORT_ERASE_MEMORY
+	      OUT_REPORT_READ_MEMORY
+	      OUT_REPORT_WRITE_MEMORY
+	      address: 0x0000 in protocol means 0x4200 in physical memory space 
+	  (mapped)
+	  FLASH mode:
+	      FLASH_REPORT_ERASE_MEMORY
+	      FLASH_REPORT_READ_MEMORY  
+	      FLASH_REPORT_WRITE_MEMORY
+	      address: 0x0000 in protocol means 0x0000 in physical memory space 
+	  (not mapped)
+	      Since the bootloader is between address 0x0000-0x2000 that range is 
+	  write/erase protected in this mode
+
+
+OUT_SPLASH_RESTART			0xc1
+	- UNUSED (256 splash screen is only 1 builtin screen so this command has no effect)
+
+OUT_REPORT_EXIT_KEYBOARD		0xEF
+	-exit keyboard mode (switch to flasher mode)
+	-length: 2
+	-meaning:	a) timeout in milliseconds between switching off the device and starting it in flasher mode (timeout=0-65535)
+			b) byte 0: timeout & 0xff
+			c) byte 1: (timeout >> 8) & 0xff
+
+OUT_REPORT_GET_VERSION			0xF1
+	-get the software version of HID (used also to reset the messagequeue of the HID after mode switch)
+	-length: 0 (OUTPUT)
+	-response: HID_REPORT_GET_VERSION
+	
+OUT_GET_DEVICE_ID			0xf5
+	-get device id
+        -length: 0 (OUTPUT)
+	-response: HID_REPORT_GET_DEVID
+
+OUT_GET_STX_SIZE			0xf6
+        -get splash size
+        -length: 0 (OUTPUT)
+	-response: HID_REPORT_GET_STX_SIZE
+
+OUT_REPORT_HOOK_GET_VERSION		0xf7
+	-get the software version of HID (hook device endpoint)
+        -length: 0 (OUTPUT)
+	-response:HID_REPORT_HOOK_GET_VERSION
+
+HID_REPORT_EXIT_FLASHER			0xff
+	-exits flash mode and starts firmware (lcd mode)
+        -length: 0 (OUTPUT)
+
+HID_REPORT_EXIT_FIRMWARE		0xef
+	-exits firmware mode and starts flasher (bootloader mode)
+        -length: 0 (OUTPUT)
+
